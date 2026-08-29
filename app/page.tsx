@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import AppShell from "@/components/layout/AppShell";
 import VideoCard from "@/components/video/VideoCard";
 import { VideoGridSkeleton } from "@/components/video/VideoSkeleton";
@@ -26,6 +26,7 @@ export default function HomePage() {
   const [hasMore, setHasMore] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   const [error, setError] = useState<string | null>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Initial load
   useEffect(() => {
@@ -46,13 +47,17 @@ export default function HomePage() {
       }
 
       if (cont) {
-        setVideos((prev) => [...prev, ...data.videos]);
+        setVideos((prev) => {
+          const ids = new Set(prev.map((v) => v.id));
+          const newVideos = (data.videos || []).filter((v: Video) => !ids.has(v.id));
+          return [...prev, ...newVideos];
+        });
       } else {
-        setVideos(data.videos);
+        setVideos(data.videos || []);
       }
 
       setContinuation(data.continuation);
-      setHasMore(!!data.continuation && data.videos.length > 0);
+      setHasMore(!!data.continuation && (data.videos?.length || 0) > 0);
     } catch (err) {
       console.error("Failed to load videos:", err);
       setError("Erro ao carregar vídeos. Tente novamente.");
@@ -70,8 +75,11 @@ export default function HomePage() {
 
   // Infinite scroll with IntersectionObserver
   useEffect(() => {
-    const sentinel = document.getElementById("infinite-scroll-sentinel");
+    const sentinel = sentinelRef.current;
     if (!sentinel) return;
+
+    // Find the scrollable parent (main element with overflow-y-auto)
+    const scrollContainer = sentinel.closest("main") || sentinel.parentElement;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -79,7 +87,11 @@ export default function HomePage() {
           loadMore();
         }
       },
-      { rootMargin: "400px", threshold: 0.1 }
+      {
+        root: scrollContainer,
+        rootMargin: "600px",
+        threshold: 0,
+      }
     );
 
     observer.observe(sentinel);
@@ -88,7 +100,7 @@ export default function HomePage() {
 
   return (
     <AppShell>
-      <div className="px-4 md:px-6 max-w-[2000px] mx-auto">
+      <div className="px-4 md:px-6 max-w-[2000px] mx-auto pb-16">
         {/* Category chips */}
         <CategoryChips
           selected={selectedCategory}
@@ -135,7 +147,7 @@ export default function HomePage() {
             </div>
 
             {/* Infinite scroll sentinel */}
-            <div id="infinite-scroll-sentinel" className="h-4" />
+            <div ref={sentinelRef} className="h-4" />
 
             {/* Loading more indicator */}
             {loadingMore && (
@@ -158,6 +170,9 @@ export default function HomePage() {
               <div className="flex flex-col items-center justify-center py-16 text-center">
                 <p className="text-lg text-[var(--muted-foreground)]">
                   Nenhum vídeo encontrado
+                </p>
+                <p className="text-sm text-[var(--muted-foreground)] mt-2">
+                  Verifique sua conexão com a internet
                 </p>
               </div>
             )}

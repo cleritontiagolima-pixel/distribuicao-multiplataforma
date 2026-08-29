@@ -56,16 +56,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserType | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [isDesktop, setIsDesktop] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
     setUser(getCurrentUser());
-    const checkDesktop = () => setIsDesktop(window.innerWidth >= 768);
-    checkDesktop();
-    window.addEventListener("resize", checkDesktop);
-    return () => window.removeEventListener("resize", checkDesktop);
   }, []);
 
   // Close mobile menu on route change
@@ -314,8 +309,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* Main Content */}
           <main
-            className="flex-1 overflow-y-auto transition-all duration-200"
-            style={isDesktop ? { marginLeft: miniSidebar ? 72 : 240 } : undefined}
+            suppressHydrationWarning
+            className={cn(
+              "flex-1 overflow-y-auto overflow-x-hidden transition-all duration-200 h-[calc(100vh-3.5rem)]",
+              miniSidebar ? "md:ml-[72px]" : "md:ml-[240px]"
+            )}
           >
             {children}
           </main>

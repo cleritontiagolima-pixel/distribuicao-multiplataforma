@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import VideoCard from "@/components/video/VideoCard";
@@ -27,12 +27,14 @@ function SearchContent() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [continuation, setContinuation] = useState<string | undefined>();
   const [hasMore, setHasMore] = useState(true);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (query) {
       setVideos([]);
       setContinuation(undefined);
       setHasMore(true);
+      setLoading(true);
       loadVideos(query);
     }
   }, [query]);
@@ -46,13 +48,17 @@ function SearchContent() {
       const data = await res.json();
 
       if (cont) {
-        setVideos((prev) => [...prev, ...data.videos]);
+        setVideos((prev) => {
+          const ids = new Set(prev.map((v) => v.id));
+          const newVideos = (data.videos || []).filter((v: Video) => !ids.has(v.id));
+          return [...prev, ...newVideos];
+        });
       } else {
-        setVideos(data.videos);
+        setVideos(data.videos || []);
       }
 
       setContinuation(data.continuation);
-      setHasMore(!!data.continuation && data.videos.length > 0);
+      setHasMore(!!data.continuation && (data.videos?.length || 0) > 0);
     } catch (err) {
       console.error("Search error:", err);
     } finally {
@@ -61,27 +67,38 @@ function SearchContent() {
     }
   }, []);
 
+  const loadMore = useCallback(() => {
+    if (loadingMore || !hasMore || !continuation || !query) return;
+    setLoadingMore(true);
+    loadVideos(query, continuation);
+  }, [loadingMore, hasMore, continuation, query, loadVideos]);
+
   // Infinite scroll
   useEffect(() => {
-    const sentinel = document.getElementById("search-infinite-sentinel");
+    const sentinel = sentinelRef.current;
     if (!sentinel) return;
+
+    const scrollContainer = sentinel.closest("main") || sentinel.parentElement;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !loadingMore && hasMore && continuation && query) {
-          setLoadingMore(true);
-          loadVideos(query, continuation);
+        if (entries[0].isIntersecting && !loadingMore && hasMore && continuation) {
+          loadMore();
         }
       },
-      { rootMargin: "400px", threshold: 0.1 }
+      {
+        root: scrollContainer,
+        rootMargin: "600px",
+        threshold: 0,
+      }
     );
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loadVideos, loadingMore, hasMore, continuation, query]);
+  }, [loadMore, loadingMore, hasMore, continuation]);
 
   return (
-    <div className="max-w-[1200px] mx-auto px-4 md:px-6 py-4">
+    <div className="max-w-[1200px] mx-auto px-4 md:px-6 py-4 pb-16">
       <div className="flex items-center gap-2 mb-4 text-[var(--muted-foreground)]">
         <Search className="w-5 h-5" />
         <span className="text-sm">
@@ -110,7 +127,7 @@ function SearchContent() {
             ))}
           </div>
 
-          <div id="search-infinite-sentinel" className="h-4" />
+          <div ref={sentinelRef} className="h-4" />
 
           {loadingMore && (
             <div className="flex items-center justify-center py-8">
