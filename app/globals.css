@@ -259,3 +259,27 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Main content area */
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  transition: margin-left 0.2s ease;
+  height: calc(100vh - 3.5rem);
+}
+
+.main-content-full {
+  margin-left: 240px;
+}
+
+.main-content-mini {
+  margin-left: 72px;
+}
+
+@media (max-width: 767px) {
+  .main-content-full,
+  .main-content-mini {
+    margin-left: 0;
+  }
+}
