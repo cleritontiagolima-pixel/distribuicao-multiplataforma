@@ -16,7 +16,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm desktop:build
+      - run: pnpm build
+      - run: npx electron-builder --publish never
       - uses: actions/upload-artifact@v6
         with:
           name: ctube-windows

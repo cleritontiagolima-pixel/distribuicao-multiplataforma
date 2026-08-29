@@ -16,8 +16,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec cap add ios
-      - run: pnpm mobile:sync
+      - run: pnpm build
+      - run: npx cap add ios --no-interactive || true
+      - run: npx cap sync ios
       - run: xcodebuild -workspace ios/App/App.xcworkspace -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO
       - uses: actions/upload-artifact@v6
         with:
