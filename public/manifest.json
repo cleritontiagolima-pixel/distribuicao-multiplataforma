@@ -36,7 +36,7 @@
       "src": "/ctube-logo.png",
       "sizes": "512x512",
       "type": "image/png",
-      "form_factor": "any"
+      "form_factor": "wide"
     }
   ],
   "shortcuts": [

@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  allowedDevOrigins: ["*.daytonaproxy01.net"],
+  allowedDevOrigins: ["*.daytonaproxy01.net", "https://*.daytonaproxy01.net"],
   images: {
     remotePatterns: [
       {
