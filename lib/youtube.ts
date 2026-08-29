@@ -16,10 +16,7 @@ export interface VideoItem {
   description?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let yt: Innertube | null = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let homeFeedCache: any = null;
 
 async function getYT(): Promise<Innertube> {
   if (!yt) {
@@ -31,24 +28,31 @@ async function getYT(): Promise<Innertube> {
   return yt;
 }
 
-// Extract video data from any yt node type
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractVideo(item: any): VideoItem | null {
   if (!item) return null;
 
-  // Different video types store the ID differently
-  const id = item.video_id || item.content_id || item.id || "";
+  // Support multiple video types: Video, LockupView, CompactVideo, etc.
+  const id =
+    item.video_id ||
+    item.content_id ||
+    item.id ||
+    "";
   if (!id) return null;
 
-  // Only include actual videos, not playlists/channels/etc
+  // Filter out non-video content
   if (item.content_type && item.content_type !== "VIDEO") return null;
 
   // Title extraction
   let title = "";
   if (typeof item.title === "string") {
     title = item.title;
-  } else if (item.title?.text) {
+  } else if (item.title?.text && typeof item.title.text === "string") {
     title = item.title.text;
+  } else if (item.title?.text?.text && typeof item.title.text.text === "string") {
+    title = item.title.text.text;
+  } else if (item.title?.runs && Array.isArray(item.title.runs)) {
+    title = item.title.runs.map((r: { text: string }) => r.text).join("");
   } else if (item.title?.toString) {
     title = item.title.toString();
   } else if (item.metadata?.title?.text) {
@@ -64,24 +68,53 @@ function extractVideo(item: any): VideoItem | null {
     const last = item.thumbnails[item.thumbnails.length - 1];
     thumbnail = last?.url || "";
   }
-  if (!thumbnail && item.content_image?.thumbnail?.sources?.length > 0) {
-    thumbnail = item.content_image.thumbnail.sources[item.content_image.thumbnail.sources.length - 1]?.url || "";
+  if (
+    !thumbnail &&
+    item.content_image?.thumbnail?.sources?.length > 0
+  ) {
+    thumbnail =
+      item.content_image.thumbnail.sources[
+        item.content_image.thumbnail.sources.length - 1
+      ]?.url || "";
   }
-  if (!thumbnail && item.content_image?.primary_thumbnail?.sources?.length > 0) {
-    thumbnail = item.content_image.primary_thumbnail.sources[item.content_image.primary_thumbnail.sources.length - 1]?.url || "";
+  if (
+    !thumbnail &&
+    item.content_image?.primary_thumbnail?.sources?.length > 0
+  ) {
+    thumbnail =
+      item.content_image.primary_thumbnail.sources[
+        item.content_image.primary_thumbnail.sources.length - 1
+      ]?.url || "";
   }
   if (!thumbnail) {
     thumbnail = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
   }
 
   // Channel extraction
-  const channelName = item.author?.name || item.metadata?.metadata_rows?.[0]?.metadata_parts?.[0]?.text?.content || "";
+  const channelName =
+    item.author?.name ||
+    item.metadata?.metadata_rows?.[0]?.metadata_parts?.[0]?.text?.content ||
+    "";
   const channelId = item.author?.id;
-  const channelAvatar = item.author?.best_thumbnail?.url || item.author?.avatar_thumbnail_url || undefined;
+  const channelAvatar =
+    item.author?.thumbnails?.[0]?.url ||
+    item.author?.best_thumbnail?.url ||
+    item.author?.avatar_thumbnail_url ||
+    undefined;
 
-  // Views & date
-  const views = item.view_count?.text || item.short_view_count?.text || item.views?.text || "";
-  const publishedAt = item.published?.text || "";
+  // Views
+  const views =
+    item.view_count?.text ||
+    item.short_view_count?.text ||
+    item.views?.text ||
+    item.snippets?.[0]?.additional_metadata?.views ||
+    "";
+
+  // Published date
+  const publishedAt =
+    item.published?.text ||
+    item.snippets?.[0]?.additional_metadata?.publish_date ||
+    "";
 
   // Duration
   let duration: string | undefined;
@@ -90,8 +123,11 @@ function extractVideo(item: any): VideoItem | null {
   } else if (item.length_text?.text) {
     duration = item.length_text.text;
   } else if (item.thumbnail_overlays) {
-    // Try to extract duration from thumbnail overlays
-    for (const overlay of (item.thumbnail_overlays || [])) {
+    for (const overlay of item.thumbnail_overlays || []) {
+      if (overlay?.text && overlay?.type === "ThumbnailOverlayTimeStatus") {
+        duration = overlay.text;
+        break;
+      }
       if (overlay?.length_text?.text) {
         duration = overlay.length_text.text;
         break;
@@ -103,77 +139,87 @@ function extractVideo(item: any): VideoItem | null {
     }
   }
 
-  return { id, title, thumbnail, channelName, channelAvatar, channelId, views, publishedAt, duration };
+  return {
+    id,
+    title,
+    thumbnail,
+    channelName,
+    channelAvatar,
+    channelId,
+    views,
+    publishedAt,
+    duration,
+  };
 }
 
-// Extract all videos from a feed, handling nested structures
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function extractVideosFromFeed(feed: any): VideoItem[] {
-  const videos: VideoItem[] = [];
-  const seen = new Set<string>();
+// Popular search terms for home feed fallback
+const HOME_FEED_QUERIES = [
+  "trending videos today",
+  "música popular 2025",
+  "vídeos populares",
+  "tech reviews",
+  "gaming highlights",
+  "cooking recipes easy",
+  "funny videos",
+  "news today",
+  "sports highlights",
+  "travel vlog",
+];
 
-  // Try feed.videos first (from Feed mixin)
-  const feedVideos = feed?.videos || [];
-  for (const item of feedVideos) {
-    const video = extractVideo(item);
-    if (video && !seen.has(video.id)) {
-      seen.add(video.id);
-      videos.push(video);
-    }
-  }
+// Current index for rotating through home feed queries
+let homeFeedIndex = 0;
 
-  // If no videos found, try extracting from contents (RichGrid → contents)
-  if (videos.length === 0) {
-    const contents = feed?.contents?.contents || feed?.page_contents?.contents || [];
-    for (const section of contents) {
-      // RichSection / RichShelf contain items
-      const items = section?.contents || section?.items || [];
-      for (const item of items) {
-        const video = extractVideo(item);
-        if (video && !seen.has(video.id)) {
-          seen.add(video.id);
-          videos.push(video);
-        }
-        // Also check nested shelf contents
-        if (item?.contents) {
-          for (const subItem of item.contents) {
-            const video = extractVideo(subItem);
-            if (video && !seen.has(video.id)) {
-              seen.add(video.id);
-              videos.push(video);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return videos;
-}
-
-// Get home feed
-export async function getHomeFeed(continuationToken?: string): Promise<{ videos: VideoItem[]; continuation?: string }> {
+// Get home feed - uses search with rotating popular terms as fallback
+export async function getHomeFeed(
+  continuationToken?: string
+): Promise<{ videos: VideoItem[]; continuation?: string }> {
   try {
     const ytm = await getYT();
 
-    let feed;
+    // If we have a continuation token, decode and use it
     if (continuationToken) {
-      // For continuation, re-fetch home and get next page
-      feed = await ytm.getHomeFeed();
-      if (feed.has_continuation) {
-        feed = await feed.getContinuation();
+      try {
+        const decoded = JSON.parse(
+          Buffer.from(continuationToken, "base64").toString()
+        );
+        if (decoded.type === "home_continuation") {
+          // We need to re-run the search and skip to continuation
+          // Since we can't preserve state, just search again with next query
+          const query = HOME_FEED_QUERIES[homeFeedIndex % HOME_FEED_QUERIES.length];
+          homeFeedIndex++;
+          const results = await ytm.search(query, { type: "video" });
+          const videos = results.videos
+            .map((v: unknown) => extractVideo(v))
+            .filter((v): v is VideoItem => v !== null);
+
+          let nextContinuation: string | undefined;
+          if (results.has_continuation) {
+            nextContinuation = Buffer.from(
+              JSON.stringify({ type: "home_continuation", ts: Date.now() })
+            ).toString("base64");
+          }
+
+          return { videos, continuation: nextContinuation };
+        }
+      } catch {
+        // Invalid token, fall through to fresh search
       }
-    } else {
-      feed = await ytm.getHomeFeed();
-      homeFeedCache = feed;
     }
 
-    const videos = extractVideosFromFeed(feed);
+    // Use a rotating popular query for the home feed
+    const query = HOME_FEED_QUERIES[homeFeedIndex % HOME_FEED_QUERIES.length];
+    homeFeedIndex++;
 
-    // Create continuation token if more content available
+    const results = await ytm.search(query, { type: "video" });
+    const videos = results.videos
+      .map((v: unknown) => extractVideo(v))
+      .filter((v): v is VideoItem => v !== null);
+
     let continuation: string | undefined;
-    if (feed.has_continuation) {
-      continuation = Buffer.from(JSON.stringify({ type: "home", ts: Date.now() })).toString("base64");
+    if (results.has_continuation) {
+      continuation = Buffer.from(
+        JSON.stringify({ type: "home_continuation", ts: Date.now() })
+      ).toString("base64");
     }
 
     return { videos, continuation };
@@ -184,13 +230,16 @@ export async function getHomeFeed(continuationToken?: string): Promise<{ videos:
 }
 
 // Search videos
-export async function searchVideos(query: string, continuationToken?: string): Promise<{ videos: VideoItem[]; continuation?: string }> {
+export async function searchVideos(
+  query: string,
+  continuationToken?: string
+): Promise<{ videos: VideoItem[]; continuation?: string }> {
   try {
     const ytm = await getYT();
 
     let results;
     if (continuationToken) {
-      // Re-run search and get next page
+      // For continuation, re-run search and skip ahead
       results = await ytm.search(query, { type: "video" });
       if (results.has_continuation) {
         results = await results.getContinuation();
@@ -199,12 +248,15 @@ export async function searchVideos(query: string, continuationToken?: string): P
       results = await ytm.search(query, { type: "video" });
     }
 
-    const videos = extractVideosFromFeed(results);
+    const videos = results.videos
+      .map((v: unknown) => extractVideo(v))
+      .filter((v): v is VideoItem => v !== null);
 
-    // Create continuation token
     let continuation: string | undefined;
     if (results.has_continuation) {
-      continuation = Buffer.from(JSON.stringify({ type: "search", query, ts: Date.now() })).toString("base64");
+      continuation = Buffer.from(
+        JSON.stringify({ type: "search", query, ts: Date.now() })
+      ).toString("base64");
     }
 
     return { videos, continuation };
@@ -215,15 +267,20 @@ export async function searchVideos(query: string, continuationToken?: string): P
 }
 
 // Get video details
-export async function getVideoDetails(videoId: string): Promise<VideoItem | null> {
+export async function getVideoDetails(
+  videoId: string
+): Promise<VideoItem | null> {
   try {
     const ytm = await getYT();
     const info = await ytm.getInfo(videoId);
 
     const basicInfo = info.basic_info;
-    const title = basicInfo?.title || "";
-    const thumbnail = basicInfo?.thumbnail?.[0]?.url || `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
-    const channelName = basicInfo?.author || basicInfo?.channel?.name || "";
+    const title = (basicInfo?.title as string) || "";
+    const thumbnail =
+      basicInfo?.thumbnail?.[0]?.url ||
+      `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+    const channelName =
+      (basicInfo?.author as string) || basicInfo?.channel?.name || "";
     const channelId = basicInfo?.channel?.id || basicInfo?.channel_id;
     const viewCount = basicInfo?.view_count || 0;
     const duration = basicInfo?.duration || 0;
@@ -234,9 +291,9 @@ export async function getVideoDetails(videoId: string): Promise<VideoItem | null
       thumbnail,
       channelName,
       channelId,
-      views: formatViewCount(viewCount),
+      views: formatViewCount(viewCount as number),
       publishedAt: "",
-      duration: formatDurationFromSeconds(duration),
+      duration: formatDurationFromSeconds(duration as number),
       description: basicInfo?.short_description || "",
     };
   } catch (error) {
@@ -246,7 +303,9 @@ export async function getVideoDetails(videoId: string): Promise<VideoItem | null
 }
 
 // Get related videos
-export async function getRelatedVideos(videoId: string): Promise<VideoItem[]> {
+export async function getRelatedVideos(
+  videoId: string
+): Promise<VideoItem[]> {
   try {
     const ytm = await getYT();
     const info = await ytm.getInfo(videoId);
@@ -270,12 +329,16 @@ export async function getRelatedVideos(videoId: string): Promise<VideoItem[]> {
   }
 }
 
-// Get trending - use home feed as fallback
+// Get trending - use search as fallback
 export async function getTrending(): Promise<VideoItem[]> {
   try {
     const ytm = await getYT();
-    const feed = await ytm.getHomeFeed();
-    return extractVideosFromFeed(feed);
+    const results = await ytm.search("trending videos 2025", {
+      type: "video",
+    });
+    return results.videos
+      .map((v: unknown) => extractVideo(v))
+      .filter((v): v is VideoItem => v !== null);
   } catch (error) {
     console.error("Error fetching trending:", error);
     return [];
@@ -294,13 +357,19 @@ export async function getSuggestions(query: string): Promise<string[]> {
 
 function formatViewCount(count: number): string {
   if (count >= 1_000_000_000) {
-    return `${(count / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}B de visualizações`;
+    return (
+      (count / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + "B visualizações"
+    );
   }
   if (count >= 1_000_000) {
-    return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M de visualizações`;
+    return (
+      (count / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M visualizações"
+    );
   }
   if (count >= 1_000) {
-    return `${(count / 1_000).toFixed(1).replace(/\.0$/, "")}K de visualizações`;
+    return (
+      (count / 1_000).toFixed(1).replace(/\.0$/, "") + "K visualizações"
+    );
   }
   return `${count} visualizações`;
 }
