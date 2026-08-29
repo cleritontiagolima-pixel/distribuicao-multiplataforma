@@ -1,0 +1,7 @@
+minimumReleaseAgeExclude:
+  - '@next/*'
+  - next
+
+onlyBuiltDependencies:
+  - electron
+  - esbuild
