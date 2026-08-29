@@ -188,9 +188,15 @@ export async function getHomeFeed(
           const query = HOME_FEED_QUERIES[homeFeedIndex % HOME_FEED_QUERIES.length];
           homeFeedIndex++;
           const results = await ytm.search(query, { type: "video" });
+          const innerSeen = new Set<string>();
           const videos = results.videos
             .map((v: unknown) => extractVideo(v))
-            .filter((v): v is VideoItem => v !== null);
+            .filter((v): v is VideoItem => v !== null)
+            .filter((v) => {
+              if (innerSeen.has(v.id)) return false;
+              innerSeen.add(v.id);
+              return true;
+            });
 
           let nextContinuation: string | undefined;
           if (results.has_continuation) {
@@ -211,9 +217,15 @@ export async function getHomeFeed(
     homeFeedIndex++;
 
     const results = await ytm.search(query, { type: "video" });
+    const seen = new Set<string>();
     const videos = results.videos
       .map((v: unknown) => extractVideo(v))
-      .filter((v): v is VideoItem => v !== null);
+      .filter((v): v is VideoItem => v !== null)
+      .filter((v) => {
+        if (seen.has(v.id)) return false;
+        seen.add(v.id);
+        return true;
+      });
 
     let continuation: string | undefined;
     if (results.has_continuation) {
@@ -248,9 +260,15 @@ export async function searchVideos(
       results = await ytm.search(query, { type: "video" });
     }
 
+    const seen = new Set<string>();
     const videos = results.videos
       .map((v: unknown) => extractVideo(v))
-      .filter((v): v is VideoItem => v !== null);
+      .filter((v): v is VideoItem => v !== null)
+      .filter((v) => {
+        if (seen.has(v.id)) return false;
+        seen.add(v.id);
+        return true;
+      });
 
     let continuation: string | undefined;
     if (results.has_continuation) {

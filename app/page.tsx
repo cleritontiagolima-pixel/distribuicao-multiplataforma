@@ -46,14 +46,21 @@ export default function HomePage() {
         return;
       }
 
+      const incoming = (data.videos || []) as Video[];
       if (cont) {
         setVideos((prev) => {
           const ids = new Set(prev.map((v) => v.id));
-          const newVideos = (data.videos || []).filter((v: Video) => !ids.has(v.id));
+          const newVideos = incoming.filter((v) => !ids.has(v.id));
           return [...prev, ...newVideos];
         });
       } else {
-        setVideos(data.videos || []);
+        // Deduplicate on initial load too
+        const seen = new Set<string>();
+        setVideos(incoming.filter((v) => {
+          if (seen.has(v.id)) return false;
+          seen.add(v.id);
+          return true;
+        }));
       }
 
       setContinuation(data.continuation);
@@ -130,7 +137,7 @@ export default function HomePage() {
         {/* Video Grid */}
         {!loading && !error && (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-6">
               {videos.map((video) => (
                 <VideoCard
                   key={video.id}

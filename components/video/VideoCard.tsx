@@ -49,7 +49,11 @@ export default function VideoCard({
   const [isHovered, setIsHovered] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const playlists = typeof window !== "undefined" ? getPlaylists() : [];
+  const [playlists, setPlaylists] = useState<ReturnType<typeof getPlaylists>>([]);
+
+  useEffect(() => {
+    setPlaylists(getPlaylists());
+  }, [showPlaylists]);
 
   // Close menu on outside click
   useEffect(() => {
