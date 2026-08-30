@@ -309,6 +309,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* Main Content */}
           <main
+            suppressHydrationWarning
             className={`main-content ${miniSidebar ? "main-content-mini" : "main-content-full"}`}
           >
             {children}
