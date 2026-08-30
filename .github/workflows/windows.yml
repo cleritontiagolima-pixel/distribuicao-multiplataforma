@@ -19,18 +19,32 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: npx electron-builder --publish never
+      # Create self-signed certificate for code signing
+      - name: Create code signing certificate
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=CTUBE, O=CTUBE, C=BR" `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -NotAfter (Get-Date).AddYears(5) `
+            -KeyAlgorithm RSA `
+            -KeyLength 2048
+          $pwd = ConvertTo-SecureString -String "ctube123" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath "ctube-cert.pfx" -Password $pwd
+          echo "Certificate created: $($cert.Thumbprint)"
+        shell: pwsh
+      - run: npx electron-builder --win --publish never
         env:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
-      # List all files in dist/ for debugging
+          CSC_LINK: ctube-cert.pfx
+          CSC_KEY_PASSWORD: ctube123
+      # List files and copy correct installer
       - name: List dist files
         run: Get-ChildItem dist -Recurse | Select-Object FullName, Length | Format-Table
         shell: pwsh
-      # Find and copy the NSIS installer (not the uninstaller)
       - name: Copy installer to installers folder
         run: |
           New-Item -ItemType Directory -Force -Path installers/windows | Out-Null
-          # Find the NSIS installer (not __uninstaller)
           $installer = Get-ChildItem dist -Filter "CTUBE Setup*.exe" | Where-Object { $_.Name -notmatch "uninstaller" } | Select-Object -First 1
           if ($installer) {
             Copy-Item $installer.FullName "installers/windows/CTUBE-Setup.exe"

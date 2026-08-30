@@ -28,13 +28,44 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: android-actions/setup-android@v3
-      - run: cd android && ./gradlew assembleDebug
-      # Copy APK to installers/android/ for easy download
+      # Generate signing keystore for release builds
+      - name: Generate signing keystore
+        run: |
+          keytool -genkeypair \
+            -v \
+            -keystore ctube-release.keystore \
+            -alias ctube \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass ctube123 \
+            -keypass ctube123 \
+            -dname "CN=CTUBE, OU=CTUBE, O=CTUBE, L=Sao Paulo, ST=SP, C=BR"
+      # Configure Gradle signing
+      - name: Configure signing
+        run: |
+          mkdir -p android/app
+          cat > android/key.properties << EOF
+          storePassword=ctube123
+          keyPassword=ctube123
+          keyAlias=ctube
+          storeFile=../ctube-release.keystore
+          EOF
+          # Update build.gradle to use signing config
+          if ! grep -q "signingConfigs" android/app/build.gradle; then
+            sed -i '/android {/a\    signingConfigs {\n        release {\n            storeFile file("../ctube-release.keystore")\n            storePassword "ctube123"\n            keyAlias "ctube"\n            keyPassword "ctube123"\n        }\n    }\n    buildTypes {\n        release {\n            signingConfig signingConfigs.release\n        }\n    }' android/app/build.gradle
+          fi
+      - run: cd android && ./gradlew assembleRelease
+      # Copy signed APK to installers/android/
       - name: Copy APK to installers folder
         run: |
           mkdir -p installers/android
-          cp android/app/build/outputs/apk/debug/app-debug.apk installers/android/CTUBE.apk
-          echo "APK saved to installers/android/CTUBE.apk"
+          APK_PATH=$(find android -name "*.apk" -path "*/release/*" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find android -name "*.apk" | head -1)
+          fi
+          cp "$APK_PATH" installers/android/CTUBE.apk
+          echo "APK saved: $(ls -lh installers/android/CTUBE.apk)"
       - uses: actions/upload-artifact@v6
         with:
           name: CTUBE-Android

@@ -1,6 +1,8 @@
 {
-  "name": "my-project",
-  "version": "0.1.0",
+  "name": "ctube",
+  "version": "1.0.0",
+  "description": "CTUBE - Player de vídeo multiplataforma",
+  "author": "CTUBE",
   "private": true,
   "main": "desktop/main.cjs",
   "build": {
