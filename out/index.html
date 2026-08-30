@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CTUBE</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; background: #0f0f0f; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .container { text-align: center; }
+    h1 { font-size: 2rem; margin-bottom: 1rem; }
+    p { color: #aaa; line-height: 1.6; }
+    .spinner {
+      width: 40px; height: 40px; border: 4px solid #333;
+      border-top: 4px solid #ff4e45; border-radius: 50%;
+      animation: spin 1s linear infinite; margin: 2rem auto 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>▶ CTUBE</h1>
+    <p>Loading application...</p>
+    <div class="spinner"></div>
+  </div>
+</body>
+</html>
