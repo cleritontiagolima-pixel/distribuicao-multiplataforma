@@ -17,16 +17,25 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      # Prepare Capacitor shell — CTUBE_URL tells the app where to load from
-      - run: node scripts/prepare-mobile-shell.mjs
+      - name: Prepare Capacitor shell
+        run: node scripts/prepare-mobile-shell.mjs
         env:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
       - run: npx cap add ios || true
       - run: npx cap sync ios
-      # Install CocoaPods (find Podfile automatically)
-      - run: cd ios && pod install
-      # Find the correct xcworkspace path
-      - run: WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1) && echo "Found workspace: $WORKSPACE" && xcodebuild -workspace "$WORKSPACE" -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+      - name: Install CocoaPods
+        run: cd ios/App && pod install || cd ios && pod install || true
+      - name: Build iOS Simulator
+        run: |
+          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          echo "Building workspace: $WORKSPACE"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme App \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO
       - uses: actions/upload-artifact@v6
         with:
           name: ctube-ios-simulator
