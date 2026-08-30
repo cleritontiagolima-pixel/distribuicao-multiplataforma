@@ -138,7 +138,7 @@ export default function HomePage() {
         {!loading && !error && (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-6">
-              {videos.map((video) => (
+              {videos.map((video, index) => (
                 <VideoCard
                   key={video.id}
                   id={video.id}
@@ -149,6 +149,7 @@ export default function HomePage() {
                   views={video.views}
                   publishedAt={video.publishedAt}
                   duration={video.duration}
+                  priority={index === 0}
                 />
               ))}
             </div>

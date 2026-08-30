@@ -31,6 +31,7 @@ interface VideoCardProps {
   publishedAt: string;
   duration?: string;
   horizontal?: boolean;
+  priority?: boolean;
 }
 
 export default function VideoCard({
@@ -43,6 +44,7 @@ export default function VideoCard({
   publishedAt,
   duration,
   horizontal = false,
+  priority = false,
 }: VideoCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const [showPlaylists, setShowPlaylists] = useState(false);
@@ -108,7 +110,7 @@ export default function VideoCard({
       >
         {/* Thumbnail */}
         <div className="relative w-[168px] h-[94px] md:w-[240px] md:h-[135px] rounded-lg overflow-hidden shrink-0 bg-[var(--secondary)]">
-          <Image
+          <Image loading={priority ? "eager" : "lazy"}
             src={thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
             alt={title}
             fill
@@ -229,7 +231,7 @@ export default function VideoCard({
     >
       {/* Thumbnail */}
       <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-[var(--secondary)]">
-        <Image
+        <Image loading={priority ? "eager" : "lazy"}
           src={thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
           alt={title}
           fill
@@ -260,7 +262,7 @@ export default function VideoCard({
       <div className="flex gap-3">
         {channelAvatar && (
           <div className="relative w-9 h-9 rounded-full overflow-hidden shrink-0 mt-0.5">
-            <Image
+            <Image loading={priority ? "eager" : "lazy"}
               src={channelAvatar}
               alt={channelName}
               fill
