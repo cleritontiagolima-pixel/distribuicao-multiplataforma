@@ -21,11 +21,11 @@
       },
       {
         "from": ".next/static",
-        "to": "static"
+        "to": "standalone/.next/static"
       },
       {
         "from": "public",
-        "to": "public"
+        "to": "standalone/public"
       }
     ],
     "asar": false,
