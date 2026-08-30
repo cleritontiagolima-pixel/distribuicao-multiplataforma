@@ -17,21 +17,26 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      # Prepare Capacitor shell — CTUBE_URL tells the app where to load from
-      - run: node scripts/prepare-mobile-shell.mjs
+      - name: Prepare Capacitor shell
+        run: node scripts/prepare-mobile-shell.mjs
         env:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
       - run: npx cap add android || true
       - run: npx cap sync android
-      # Setup Java 21 for Capacitor Android (requires JDK 21)
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
       - uses: android-actions/setup-android@v3
       - run: cd android && ./gradlew assembleDebug
+      # Copy APK to installers/android/ for easy download
+      - name: Copy APK to installers folder
+        run: |
+          mkdir -p installers/android
+          cp android/app/build/outputs/apk/debug/app-debug.apk installers/android/CTUBE.apk
+          echo "APK saved to installers/android/CTUBE.apk"
       - uses: actions/upload-artifact@v6
         with:
-          name: ctube-android-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: CTUBE-Android
+          path: installers/android/CTUBE.apk
           if-no-files-found: error

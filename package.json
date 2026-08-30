@@ -21,7 +21,12 @@
     "mobile:shell": "node scripts/prepare-mobile-shell.mjs",
     "mobile:sync": "pnpm mobile:shell && npx cap sync",
     "mobile:android": "npx cap open android",
-    "mobile:ios": "npx cap open ios"
+    "mobile:ios": "npx cap open ios",
+    "build:installers": "echo 'Installers are built by GitHub Actions. Push a v* tag to trigger.' && echo '  git tag v1.0.0 && git push origin v1.0.0'",
+    "build:desktop": "pnpm build && npx electron-builder --publish never",
+    "build:desktop:win": "pnpm build && npx electron-builder --win --publish never",
+    "build:desktop:mac": "pnpm build && npx electron-builder --mac --publish never",
+    "build:desktop:linux": "pnpm build && npx electron-builder --linux --publish never"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

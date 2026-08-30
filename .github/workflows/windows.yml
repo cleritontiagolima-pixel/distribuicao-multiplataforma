@@ -22,8 +22,15 @@ jobs:
       - run: npx electron-builder --publish never
         env:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
+      # Copy EXE to installers/windows/ for easy download
+      - name: Copy EXE to installers folder
+        run: |
+          mkdir -p installers\windows
+          copy dist\*.exe installers\windows\CTUBE-Setup.exe
+          echo "EXE saved to installers\windows\CTUBE-Setup.exe"
+        shell: cmd
       - uses: actions/upload-artifact@v6
         with:
-          name: ctube-windows
-          path: dist/*.exe
+          name: CTUBE-Windows
+          path: installers/windows/CTUBE-Setup.exe
           if-no-files-found: error

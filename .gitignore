@@ -13,3 +13,17 @@ __v0_jsx-dev-runtime.ts
 node_modules
 .next/
 .DS_Store
+
+# Installer binaries (built by CI)
+installers/**/*.apk
+installers/**/*.app
+installers/**/*.zip
+installers/**/*.exe
+!installers/**/.gitkeep
+
+# Electron output
+dist/
+
+# Capacitor native projects
+android/
+ios/

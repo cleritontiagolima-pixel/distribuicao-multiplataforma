@@ -36,8 +36,20 @@ jobs:
             -configuration Debug \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO
+      # Copy .app to installers/ios/ for easy download
+      - name: Copy app to installers folder
+        run: |
+          mkdir -p installers/ios
+          APP_PATH=$(find build -name "App.app" -type d | head -1)
+          if [ -n "$APP_PATH" ]; then
+            cp -r "$APP_PATH" installers/ios/CTUBE.app
+            echo "App saved to installers/ios/CTUBE.app"
+          else
+            echo "App bundle not found, zipping build output instead"
+            cd build && zip -r ../installers/ios/CTUBE-simulator.zip . && cd ..
+          fi
       - uses: actions/upload-artifact@v6
         with:
-          name: ctube-ios-simulator
-          path: build/Build/Products/Debug-iphonesimulator/App.app
+          name: CTUBE-iOS
+          path: installers/ios/
           if-no-files-found: error
