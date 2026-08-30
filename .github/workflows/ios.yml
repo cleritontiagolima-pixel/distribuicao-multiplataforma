@@ -23,9 +23,10 @@ jobs:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
       - run: npx cap add ios || true
       - run: npx cap sync ios
-      # Install CocoaPods to generate the .xcworkspace
-      - run: cd ios/App && pod install
-      - run: xcodebuild -workspace ios/App/App.xcworkspace -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO
+      # Install CocoaPods (find Podfile automatically)
+      - run: cd ios && pod install
+      # Find the correct xcworkspace path
+      - run: WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1) && echo "Found workspace: $WORKSPACE" && xcodebuild -workspace "$WORKSPACE" -scheme App -sdk iphonesimulator -configuration Debug -derivedDataPath build CODE_SIGNING_ALLOWED=NO
       - uses: actions/upload-artifact@v6
         with:
           name: ctube-ios-simulator
