@@ -9,7 +9,60 @@
     "appId": "app.ctube.desktop",
     "productName": "CTUBE",
     "directories": { "output": "dist" },
-    "files": ["desktop/**/*", "package.json"],
+    "files": [
+      "desktop/**/*",
+      "package.json",
+      "next.config.mjs",
+      "public/**/*",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": ".next",
+        "to": ".next"
+      },
+      {
+        "from": "app",
+        "to": "app"
+      },
+      {
+        "from": "lib",
+        "to": "lib"
+      },
+      {
+        "from": "hooks",
+        "to": "hooks"
+      },
+      {
+        "from": "components",
+        "to": "components"
+      },
+      {
+        "from": "node_modules/next",
+        "to": "node_modules/next"
+      },
+      {
+        "from": "node_modules/react",
+        "to": "node_modules/react"
+      },
+      {
+        "from": "node_modules/react-dom",
+        "to": "node_modules/react-dom"
+      },
+      {
+        "from": "node_modules/youtubei.js",
+        "to": "node_modules/youtubei.js"
+      },
+      {
+        "from": "node_modules/@vercel",
+        "to": "node_modules/@vercel"
+      },
+      {
+        "from": "node_modules/sharp",
+        "to": "node_modules/sharp"
+      }
+    ],
+    "asar": false,
     "win": { "target": "nsis" },
     "mac": { "target": "dmg" },
     "linux": { "target": "AppImage" }
