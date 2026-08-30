@@ -16,6 +16,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Build the web app (creates .next/standalone/)
       - run: pnpm build
       - name: Prepare Capacitor shell
         run: node scripts/prepare-mobile-shell.mjs
@@ -28,13 +29,11 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: android-actions/setup-android@v3
-      # assembleDebug produces a signed APK (debug keystore)
       - run: cd android && ./gradlew assembleDebug
-      # Copy APK to installers/android/
       - name: Copy APK to installers folder
         run: |
           mkdir -p installers/android
-          APK_PATH=$(find android -name "*.apk" | head -1)
+          APK_PATH=$(find android -name "*.apk" -path "*/debug/*" | head -1)
           cp "$APK_PATH" installers/android/CTUBE.apk
           echo "APK saved: $(ls -lh installers/android/CTUBE.apk)"
       - uses: actions/upload-artifact@v6

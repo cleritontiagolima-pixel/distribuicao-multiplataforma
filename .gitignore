@@ -27,3 +27,7 @@ dist/
 # Capacitor native projects
 android/
 ios/
+
+# Next.js standalone output (but keep out/index.html placeholder for Capacitor)
+out/*
+!out/index.html

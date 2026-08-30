@@ -18,7 +18,20 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Build creates .next/standalone/ with self-contained Next.js server
       - run: pnpm build
+      # Verify standalone directory exists
+      - name: Verify standalone build
+        run: |
+          if (Test-Path ".next/standalone/server.js") {
+            Write-Host "Standalone build OK"
+            $size = (Get-ChildItem .next/standalone -Recurse | Measure-Object -Property Length -Sum).Sum
+            Write-Host "Standalone size: $([math]::Round($size/1MB, 1)) MB"
+          } else {
+            Write-Error ".next/standalone/server.js not found!"
+            exit 1
+          }
+        shell: pwsh
       # Create self-signed certificate for code signing
       - name: Create code signing certificate
         run: |
@@ -33,15 +46,12 @@ jobs:
           Export-PfxCertificate -Cert $cert -FilePath "ctube-cert.pfx" -Password $pwd
           echo "Certificate created: $($cert.Thumbprint)"
         shell: pwsh
+      # Build Electron with standalone Next.js server
       - run: npx electron-builder --win --publish never
         env:
-          CTUBE_URL: ${{ secrets.CTUBE_URL }}
           CSC_LINK: ctube-cert.pfx
           CSC_KEY_PASSWORD: ctube123
-      # List files and copy correct installer
-      - name: List dist files
-        run: Get-ChildItem dist -Recurse | Select-Object FullName, Length | Format-Table
-        shell: pwsh
+      # Copy correct installer (not uninstaller)
       - name: Copy installer to installers folder
         run: |
           New-Item -ItemType Directory -Force -Path installers/windows | Out-Null

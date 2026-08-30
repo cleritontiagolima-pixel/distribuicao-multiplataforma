@@ -5,6 +5,9 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  // Standalone mode creates a self-contained Node.js server
+  // This allows Electron to run the full Next.js app including API routes
+  output: "standalone",
   images: {
     unoptimized: true,
     remotePatterns: [

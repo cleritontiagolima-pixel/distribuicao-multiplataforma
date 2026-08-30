@@ -16,6 +16,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Build the web app (creates .next/standalone/)
       - run: pnpm build
       - name: Prepare Capacitor shell
         run: node scripts/prepare-mobile-shell.mjs
@@ -24,7 +25,12 @@ jobs:
       - run: npx cap add ios || true
       - run: npx cap sync ios
       - name: Install CocoaPods
-        run: cd ios/App && pod install || cd ios && pod install || true
+        run: |
+          if [ -d "ios/App/Podfile" ]; then
+            cd ios/App && pod install
+          elif [ -d "ios/Podfile" ]; then
+            cd ios && pod install
+          fi
       - name: Build iOS Simulator
         run: |
           WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
@@ -36,7 +42,6 @@ jobs:
             -configuration Debug \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO
-      # Copy .app to installers/ios/ for easy download
       - name: Copy app to installers folder
         run: |
           mkdir -p installers/ios

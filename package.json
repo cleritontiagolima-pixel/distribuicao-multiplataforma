@@ -12,17 +12,20 @@
     "files": [
       "desktop/**/*",
       "package.json",
-      "next.config.mjs",
       "public/**/*"
     ],
     "extraResources": [
       {
-        "from": ".next",
-        "to": ".next"
+        "from": ".next/standalone",
+        "to": "standalone"
       },
       {
-        "from": "out",
-        "to": "out"
+        "from": ".next/static",
+        "to": "static"
+      },
+      {
+        "from": "public",
+        "to": "public"
       }
     ],
     "asar": false,

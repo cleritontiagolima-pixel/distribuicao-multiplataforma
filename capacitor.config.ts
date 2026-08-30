@@ -1,18 +1,19 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
-// A URL publicada do CTUBE (ex.: https://ctube.vercel.app).
-// Definida em tempo de build pela variável de ambiente CTUBE_URL.
+// CTUBE_URL: the published web app URL (e.g. https://ctube.vercel.app).
+// Mobile apps load from this URL instead of a local server.
 const CTUBE_URL = process.env.CTUBE_URL?.trim()
 
 const config: CapacitorConfig = {
   appId: 'app.ctube.player',
   appName: 'CTUBE',
   webDir: 'out',
-  // Só define server.url quando a URL existe; caso contrário o Capacitor
-  // carrega o shell local em `out/` (que redireciona para a URL publicada).
-  ...(CTUBE_URL ? { server: { url: CTUBE_URL, cleartext: false } } : {}),
+  // When CTUBE_URL is set, Capacitor loads from the deployed web app.
+  // The out/ directory is just a placeholder for cap sync.
+  ...(CTUBE_URL
+    ? { server: { url: CTUBE_URL, cleartext: false } }
+    : {}),
   ios: {
-    // Permite tocar vídeo/áudio inline sem forçar tela cheia.
     limitsNavigationsToAppBoundDomains: false,
   },
   android: {
