@@ -1,104 +1,172 @@
 const { app, BrowserWindow, shell } = require("electron");
 const path = require("path");
 const http = require("http");
+const fs = require("fs");
 
 const CTUBE_URL = (process.env.CTUBE_URL || "").trim();
 const LOCAL_PORT = 3210;
 const LOCAL_URL = `http://localhost:${LOCAL_PORT}`;
 
-let nextServer = null;
 let serverHandle = null;
 
-// Start Next.js server programmatically
-async function startLocalServer() {
-  if (CTUBE_URL) return;
+// MIME types for static files
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".map": "application/json",
+  ".txt": "text/plain",
+  ".webp": "image/webp",
+};
 
-  console.log("[CTUBE] Starting Next.js server on port", LOCAL_PORT);
-
-  // Determine the app root — inside asar or on disk
-  const appRoot = app.isPackaged
-    ? path.join(process.resourcesPath)
-    : path.join(__dirname, "..");
-
-  try {
-    // Use Next.js programmatic API
-    const next = require(path.join(appRoot, "node_modules", "next"));
-    nextServer = next({
-      dev: false,
-      dir: appRoot,
-      conf: {
-        images: { unoptimized: true },
-      },
-    });
-
-    const handle = nextServer.getRequestHandler();
-    await nextServer.prepare();
-
-    serverHandle = http.createServer((req, res) => {
-      // Pass all requests to Next.js handler
-      handle(req, res);
-    });
-
-    await new Promise((resolve, reject) => {
-      serverHandle.listen(LOCAL_PORT, "127.0.0.1", () => {
-        console.log("[CTUBE] Server ready on", LOCAL_URL);
-        resolve();
-      });
-      serverHandle.on("error", reject);
-    });
-  } catch (err) {
-    console.error("[CTUBE] Failed to start Next.js:", err.message);
-    // Fallback: try to serve static files from .next
-    await startStaticFallback(appRoot);
+function getAppDir() {
+  if (app.isPackaged) {
+    // extraResources go to process.resourcesPath
+    // files go to process.resourcesPath/app (or just resourcesPath with asar:false)
+    const candidates = [
+      process.resourcesPath,
+      path.join(process.resourcesPath, "app"),
+    ];
+    for (const dir of candidates) {
+      if (fs.existsSync(path.join(dir, ".next"))) return dir;
+    }
+    return process.resourcesPath;
   }
+  return path.join(__dirname, "..");
 }
 
-// Minimal static file server as fallback
-async function startStaticFallback(appRoot) {
-  const fs = require("fs");
-  const nextDir = path.join(appRoot, ".next");
+function findNextStatic(appDir) {
+  // Find the .next directory
+  const candidates = [
+    path.join(appDir, ".next"),
+    path.join(process.resourcesPath, ".next"),
+    path.join(process.resourcesPath, "app", ".next"),
+  ];
+  
+  console.log("[CTUBE] Searching for .next in:");
+  for (const dir of candidates) {
+    console.log("[CTUBE]  ", dir, "->", fs.existsSync(dir));
+    if (fs.existsSync(dir)) return dir;
+  }
+  
+  // Debug: list what's available
+  for (const dir of [process.resourcesPath, app.isPackaged ? process.resourcesPath : path.join(__dirname, "..")]) {
+    try {
+      console.log("[CTUBE] Contents of", dir, ":", fs.readdirSync(dir).join(", "));
+    } catch (e) { /* ignore */ }
+  }
+  
+  return null;
+}
 
-  if (!fs.existsSync(nextDir)) {
-    throw new Error("No .next directory found");
+function findPublicDir(appDir) {
+  const pub = path.join(appDir, "public");
+  if (fs.existsSync(pub)) return pub;
+  return null;
+}
+
+// Simple static file server for the Next.js build
+function startStaticServer() {
+  if (CTUBE_URL) return Promise.resolve();
+
+  const appDir = getAppDir();
+  const nextDir = findNextStatic(appDir);
+  const publicDir = findPublicDir(appDir);
+
+  console.log("[CTUBE] App dir:", appDir);
+  console.log("[CTUBE] .next dir:", nextDir);
+  console.log("[CTUBE] public dir:", publicDir);
+
+  if (!nextDir) {
+    console.error("[CTUBE] .next directory not found in", appDir);
+    // List what's available
+    try {
+      const items = fs.readdirSync(appDir);
+      console.log("[CTUBE] Available:", items.join(", "));
+    } catch (e) {
+      console.error("[CTUBE] Cannot read dir:", e.message);
+    }
+    return Promise.reject(new Error(".next directory not found"));
   }
 
-  const mimeTypes = {
-    ".html": "text/html",
-    ".js": "application/javascript",
-    ".css": "text/css",
-    ".json": "application/json",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".svg": "image/svg+xml",
-    ".ico": "image/x-icon",
-    ".woff": "font/woff",
-    ".woff2": "font/woff2",
-  };
+  // Pre-load the HTML pages from .next/server/app
+  const serverAppDir = path.join(nextDir, "server", "app");
 
   serverHandle = http.createServer((req, res) => {
-    let filePath = path.join(nextDir, "static", req.url);
-    if (!fs.existsSync(filePath)) {
-      filePath = path.join(nextDir, req.url);
+    const url = new URL(req.url, `http://localhost:${LOCAL_PORT}`);
+    let pathname = url.pathname;
+
+    // Try to serve from .next/static first (CSS, JS chunks)
+    const staticFile = path.join(nextDir, "static", pathname);
+    if (fs.existsSync(staticFile) && fs.statSync(staticFile).isFile()) {
+      const ext = path.extname(staticFile);
+      res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
+      fs.createReadStream(staticFile).pipe(res);
+      return;
     }
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-      filePath = path.join(appRoot, "out", "index.html");
+
+    // Try to serve from public/ directory
+    if (publicDir) {
+      const publicFile = path.join(publicDir, pathname);
+      if (fs.existsSync(publicFile) && fs.statSync(publicFile).isFile()) {
+        const ext = path.extname(publicFile);
+        res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" });
+        fs.createReadStream(publicFile).pipe(res);
+        return;
+      }
     }
-    const ext = path.extname(filePath);
-    const contentType = mimeTypes[ext] || "application/octet-stream";
-    try {
-      const content = fs.readFileSync(filePath);
-      res.writeHead(200, { "Content-Type": contentType });
-      res.end(content);
-    } catch {
-      res.writeHead(404);
-      res.end("Not found");
+
+    // Try to serve the HTML page from .next/server/app
+    // For routes like /search, try /search/index.html
+    let htmlPath = path.join(serverAppDir, pathname, "index.html");
+    if (!fs.existsSync(htmlPath)) {
+      // Try with .html extension
+      htmlPath = path.join(serverAppDir, pathname + ".html");
     }
+    if (!fs.existsSync(htmlPath) && pathname !== "/") {
+      // Try the root index.html for SPA routing
+      htmlPath = path.join(serverAppDir, "index.html");
+    }
+    if (!fs.existsSync(htmlPath)) {
+      htmlPath = path.join(serverAppDir, "index.html");
+    }
+
+    if (fs.existsSync(htmlPath)) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      fs.createReadStream(htmlPath).pipe(res);
+      return;
+    }
+
+    // 404 fallback
+    const notFoundPath = path.join(serverAppDir, "_not-found", "index.html");
+    if (fs.existsSync(notFoundPath)) {
+      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+      fs.createReadStream(notFoundPath).pipe(res);
+      return;
+    }
+
+    res.writeHead(404);
+    res.end("Not found");
   });
 
-  await new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     serverHandle.listen(LOCAL_PORT, "127.0.0.1", () => {
-      console.log("[CTUBE] Static fallback ready on", LOCAL_URL);
+      console.log("[CTUBE] Static server ready on", LOCAL_URL);
       resolve();
+    });
+    serverHandle.on("error", (err) => {
+      console.error("[CTUBE] Server error:", err);
+      reject(err);
     });
   });
 }
@@ -138,7 +206,7 @@ function createWindow(url) {
 
 app.whenReady().then(async () => {
   try {
-    await startLocalServer();
+    await startStaticServer();
     const url = CTUBE_URL || LOCAL_URL;
     console.log("[CTUBE] Loading:", url);
     createWindow(url);
@@ -167,11 +235,9 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (serverHandle) serverHandle.close();
-  if (nextServer) nextServer.close();
   if (process.platform !== "darwin") app.quit();
 });
 
 app.on("before-quit", () => {
   if (serverHandle) serverHandle.close();
-  if (nextServer) nextServer.close();
 });
