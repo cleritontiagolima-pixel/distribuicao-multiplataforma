@@ -28,22 +28,25 @@ async function getYT(): Promise<Innertube> {
   return yt;
 }
 
+// Timeout wrapper for any async operation
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractVideo(item: any): VideoItem | null {
   if (!item) return null;
 
-  // Support multiple video types: Video, LockupView, CompactVideo, etc.
-  const id =
-    item.video_id ||
-    item.content_id ||
-    item.id ||
-    "";
+  const id = item.video_id || item.content_id || item.id || "";
   if (!id) return null;
 
-  // Filter out non-video content
   if (item.content_type && item.content_type !== "VIDEO") return null;
 
-  // Title extraction
   let title = "";
   if (typeof item.title === "string") {
     title = item.title;
@@ -62,25 +65,18 @@ function extractVideo(item: any): VideoItem | null {
   }
   if (!title) return null;
 
-  // Thumbnail extraction
   let thumbnail = "";
   if (item.thumbnails && item.thumbnails.length > 0) {
     const last = item.thumbnails[item.thumbnails.length - 1];
     thumbnail = last?.url || "";
   }
-  if (
-    !thumbnail &&
-    item.content_image?.thumbnail?.sources?.length > 0
-  ) {
+  if (!thumbnail && item.content_image?.thumbnail?.sources?.length > 0) {
     thumbnail =
       item.content_image.thumbnail.sources[
         item.content_image.thumbnail.sources.length - 1
       ]?.url || "";
   }
-  if (
-    !thumbnail &&
-    item.content_image?.primary_thumbnail?.sources?.length > 0
-  ) {
+  if (!thumbnail && item.content_image?.primary_thumbnail?.sources?.length > 0) {
     thumbnail =
       item.content_image.primary_thumbnail.sources[
         item.content_image.primary_thumbnail.sources.length - 1
@@ -90,7 +86,6 @@ function extractVideo(item: any): VideoItem | null {
     thumbnail = `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
   }
 
-  // Channel extraction
   const channelName =
     item.author?.name ||
     item.metadata?.metadata_rows?.[0]?.metadata_parts?.[0]?.text?.content ||
@@ -102,7 +97,6 @@ function extractVideo(item: any): VideoItem | null {
     item.author?.avatar_thumbnail_url ||
     undefined;
 
-  // Views
   const views =
     item.view_count?.text ||
     item.short_view_count?.text ||
@@ -110,13 +104,11 @@ function extractVideo(item: any): VideoItem | null {
     item.snippets?.[0]?.additional_metadata?.views ||
     "";
 
-  // Published date
   const publishedAt =
     item.published?.text ||
     item.snippets?.[0]?.additional_metadata?.publish_date ||
     "";
 
-  // Duration
   let duration: string | undefined;
   if (item.duration?.text) {
     duration = item.duration.text;
@@ -152,7 +144,6 @@ function extractVideo(item: any): VideoItem | null {
   };
 }
 
-// Popular search terms for home feed fallback
 const HOME_FEED_QUERIES = [
   "trending videos today",
   "música popular 2025",
@@ -166,28 +157,26 @@ const HOME_FEED_QUERIES = [
   "travel vlog",
 ];
 
-// Current index for rotating through home feed queries
 let homeFeedIndex = 0;
 
-// Get home feed - uses search with rotating popular terms as fallback
+// Server-side timeout: 12 seconds max per YouTube API call
+const YT_TIMEOUT = 12000;
+
 export async function getHomeFeed(
   continuationToken?: string
 ): Promise<{ videos: VideoItem[]; continuation?: string }> {
   try {
-    const ytm = await getYT();
+    const ytm = await withTimeout(getYT(), YT_TIMEOUT);
 
-    // If we have a continuation token, decode and use it
     if (continuationToken) {
       try {
         const decoded = JSON.parse(
           Buffer.from(continuationToken, "base64").toString()
         );
         if (decoded.type === "home_continuation") {
-          // We need to re-run the search and skip to continuation
-          // Since we can't preserve state, just search again with next query
           const query = HOME_FEED_QUERIES[homeFeedIndex % HOME_FEED_QUERIES.length];
           homeFeedIndex++;
-          const results = await ytm.search(query, { type: "video" });
+          const results = await withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT);
           const innerSeen = new Set<string>();
           const videos = results.videos
             .map((v: unknown) => extractVideo(v))
@@ -208,15 +197,14 @@ export async function getHomeFeed(
           return { videos, continuation: nextContinuation };
         }
       } catch {
-        // Invalid token, fall through to fresh search
+        // Invalid token, fall through
       }
     }
 
-    // Use a rotating popular query for the home feed
     const query = HOME_FEED_QUERIES[homeFeedIndex % HOME_FEED_QUERIES.length];
     homeFeedIndex++;
 
-    const results = await ytm.search(query, { type: "video" });
+    const results = await withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT);
     const seen = new Set<string>();
     const videos = results.videos
       .map((v: unknown) => extractVideo(v))
@@ -241,23 +229,21 @@ export async function getHomeFeed(
   }
 }
 
-// Search videos
 export async function searchVideos(
   query: string,
   continuationToken?: string
 ): Promise<{ videos: VideoItem[]; continuation?: string }> {
   try {
-    const ytm = await getYT();
+    const ytm = await withTimeout(getYT(), YT_TIMEOUT);
 
     let results;
     if (continuationToken) {
-      // For continuation, re-run search and skip ahead
-      results = await ytm.search(query, { type: "video" });
+      results = await withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT);
       if (results.has_continuation) {
-        results = await results.getContinuation();
+        results = await withTimeout(results.getContinuation(), YT_TIMEOUT);
       }
     } else {
-      results = await ytm.search(query, { type: "video" });
+      results = await withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT);
     }
 
     const seen = new Set<string>();
@@ -284,13 +270,12 @@ export async function searchVideos(
   }
 }
 
-// Get video details
 export async function getVideoDetails(
   videoId: string
 ): Promise<VideoItem | null> {
   try {
-    const ytm = await getYT();
-    const info = await ytm.getInfo(videoId);
+    const ytm = await withTimeout(getYT(), YT_TIMEOUT);
+    const info = await withTimeout(ytm.getInfo(videoId), YT_TIMEOUT);
 
     const basicInfo = info.basic_info;
     const title = (basicInfo?.title as string) || "";
@@ -320,17 +305,15 @@ export async function getVideoDetails(
   }
 }
 
-// Get related videos
 export async function getRelatedVideos(
   videoId: string
 ): Promise<VideoItem[]> {
   try {
-    const ytm = await getYT();
-    const info = await ytm.getInfo(videoId);
+    const ytm = await withTimeout(getYT(), YT_TIMEOUT);
+    const info = await withTimeout(ytm.getInfo(videoId), YT_TIMEOUT);
     const videos: VideoItem[] = [];
     const seen = new Set<string>();
 
-    // Related videos are in watch_next_feed
     const relatedItems = info.watch_next_feed || [];
     for (const item of relatedItems) {
       const video = extractVideo(item);
@@ -347,13 +330,13 @@ export async function getRelatedVideos(
   }
 }
 
-// Get trending - use search as fallback
 export async function getTrending(): Promise<VideoItem[]> {
   try {
-    const ytm = await getYT();
-    const results = await ytm.search("trending videos 2025", {
-      type: "video",
-    });
+    const ytm = await withTimeout(getYT(), YT_TIMEOUT);
+    const results = await withTimeout(
+      ytm.search("trending videos 2025", { type: "video" }),
+      YT_TIMEOUT
+    );
     return results.videos
       .map((v: unknown) => extractVideo(v))
       .filter((v): v is VideoItem => v !== null);
@@ -363,11 +346,10 @@ export async function getTrending(): Promise<VideoItem[]> {
   }
 }
 
-// Get suggestions/autocomplete
 export async function getSuggestions(query: string): Promise<string[]> {
   try {
-    const ytm = await getYT();
-    return await ytm.getSearchSuggestions(query);
+    const ytm = await withTimeout(getYT(), YT_TIMEOUT);
+    return await withTimeout(ytm.getSearchSuggestions(query), 8000);
   } catch {
     return [];
   }

@@ -20,7 +20,6 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    // If user opens a second instance, focus the existing window
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
@@ -33,22 +32,32 @@ if (!gotLock) {
 // ============================================================
 function getStandaloneDir() {
   if (app.isPackaged) {
-    // extraResources with asar:false → files at resourcesPath
-    const candidates = [
-      path.join(process.resourcesPath, "standalone"),
-    ];
-    for (const dir of candidates) {
-      if (fs.existsSync(path.join(dir, "server.js"))) return dir;
-    }
+    const candidate = path.join(process.resourcesPath, "standalone");
+    if (fs.existsSync(path.join(candidate, "server.js"))) return candidate;
   }
   // Development
   return path.join(__dirname, "..", ".next", "standalone");
+}
+
+function copyDirSync(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
 }
 
 // ============================================================
 // NEXT.JS STANDALONE SERVER
 // ============================================================
 function startNextServer() {
+  // If CTUBE_URL is set, skip local server
   if (CTUBE_URL) return Promise.resolve();
 
   const standaloneDir = getStandaloneDir();
@@ -58,35 +67,38 @@ function startNextServer() {
   console.log("[CTUBE] server.js exists:", fs.existsSync(serverFile));
 
   if (!fs.existsSync(serverFile)) {
+    // Log what's available for debugging
     try {
-      const items = fs.readdirSync(app.isPackaged ? process.resourcesPath : path.join(__dirname, ".."));
-      console.log("[CTUBE] Available:", items.join(", "));
+      const basePath = app.isPackaged ? process.resourcesPath : path.join(__dirname, "..");
+      const items = fs.readdirSync(basePath);
+      console.log("[CTUBE] Available in basePath:", items.join(", "));
+      if (fs.existsSync(path.join(basePath, "standalone"))) {
+        const saItems = fs.readdirSync(path.join(basePath, "standalone"));
+        console.log("[CTUBE] Available in standalone:", saItems.join(", "));
+      }
     } catch (e) { /* ignore */ }
-    return Promise.reject(new Error("Next.js standalone server not found."));
+    return Promise.reject(
+      new Error("Next.js standalone server not found. Reinstall the app.")
+    );
   }
 
-  // Verify .next/static is in the right place
+  // Ensure .next/static is present
   const nextStatic = path.join(standaloneDir, ".next", "static");
   if (!fs.existsSync(nextStatic)) {
-    console.log("[CTUBE] .next/static not found in standalone, checking alternatives...");
-    // Try to find it
-    const altLocations = [
-      app.isPackaged ? path.join(process.resourcesPath, "static") : null,
-      app.isPackaged ? path.join(process.resourcesPath, "app", "static") : null,
-      !app.isPackaged ? path.join(__dirname, "..", ".next", "static") : null,
-    ].filter(Boolean);
-
-    for (const alt of altLocations) {
-      if (fs.existsSync(alt)) {
-        fs.mkdirSync(path.join(standaloneDir, ".next"), { recursive: true });
-        copyDirSync(alt, nextStatic);
-        console.log("[CTUBE] Copied .next/static from", alt);
-        break;
-      }
+    console.log("[CTUBE] .next/static missing, trying to copy...");
+    const altStatic = app.isPackaged
+      ? path.join(process.resourcesPath, "static")
+      : path.join(__dirname, "..", ".next", "static");
+    if (fs.existsSync(altStatic)) {
+      fs.mkdirSync(path.join(standaloneDir, ".next"), { recursive: true });
+      copyDirSync(altStatic, nextStatic);
+      console.log("[CTUBE] Copied .next/static from", altStatic);
+    } else {
+      console.warn("[CTUBE] WARNING: .next/static not found at", altStatic);
     }
   }
 
-  // Verify public is in the right place
+  // Ensure public/ is present
   const publicDir = path.join(standaloneDir, "public");
   if (!fs.existsSync(publicDir)) {
     const altPublic = app.isPackaged
@@ -98,7 +110,7 @@ function startNextServer() {
     }
   }
 
-  // Kill any existing server on the port
+  // Kill any existing process on the port
   killServerOnPort(LOCAL_PORT);
 
   // Start the Next.js standalone server
@@ -117,27 +129,29 @@ function startNextServer() {
     console.log("[CTUBE:next]", data.toString().trim());
   });
   serverProcess.stderr?.on("data", (data) => {
-    console.log("[CTUBE:next]", data.toString().trim());
+    console.error("[CTUBE:next:err]", data.toString().trim());
   });
 
   serverProcess.on("error", (err) => {
-    console.error("[CTUBE] Server process error:", err);
+    console.error("[CTUBE] Server process error:", err.message);
   });
 
   serverProcess.on("exit", (code) => {
-    console.log("[CTUBE] Server process exited with code:", code);
+    console.log("[CTUBE] Server exited with code:", code);
     serverProcess = null;
-    // If server crashes and app is still open, show error
     if (!isQuitting && mainWindow) {
       mainWindow.loadURL(
         "data:text/html;charset=utf-8," +
-          encodeURIComponent(loadingHTML("O servidor parou inesperadamente.<br/>Reinicie o aplicativo."))
+          encodeURIComponent(
+            loadingHTML(
+              "O servidor parou inesperadamente.<br/>Reinicie o aplicativo."
+            )
+          )
       );
     }
   });
 
-  // Wait for server to be ready
-  return waitForServer(LOCAL_URL, 30000);
+  return waitForServer(LOCAL_URL, 20000);
 }
 
 function waitForServer(url, timeoutMs) {
@@ -146,69 +160,75 @@ function waitForServer(url, timeoutMs) {
     const timeout = setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        reject(new Error("Servidor não respondeu em 30 segundos."));
+        reject(
+          new Error(
+            "O servidor não respondeu a tempo. Feche e reinicie o aplicativo."
+          )
+        );
       }
     }, timeoutMs);
 
+    let attempts = 0;
+    const maxAttempts = Math.floor(timeoutMs / 500);
+
     const check = () => {
       if (resolved) return;
-      http.get(url, (res) => {
-        if (!resolved && res.statusCode && res.statusCode < 500) {
-          resolved = true;
-          clearTimeout(timeout);
+      attempts++;
+
+      const req = http
+        .get(url, (res) => {
           res.resume();
-          console.log("[CTUBE] Server ready on", url);
-          resolve();
-        } else {
-          res.resume();
-          setTimeout(check, 500);
-        }
-      }).on("error", () => {
-        if (!resolved) setTimeout(check, 500);
-      });
+          if (!resolved && res.statusCode && res.statusCode < 500) {
+            resolved = true;
+            clearTimeout(timeout);
+            console.log("[CTUBE] Server ready on", url);
+            resolve();
+          } else if (!resolved) {
+            setTimeout(check, 500);
+          }
+        })
+        .on("error", () => {
+          if (!resolved) {
+            if (attempts >= maxAttempts) {
+              resolved = true;
+              clearTimeout(timeout);
+              reject(
+                new Error("Servidor não conseguiu iniciar. Reinicie o app.")
+              );
+            } else {
+              setTimeout(check, 500);
+            }
+          }
+        });
     };
 
-    setTimeout(check, 2000);
+    // Start checking after a short delay
+    setTimeout(check, 1500);
   });
 }
 
 function killServerOnPort(port) {
   try {
     if (process.platform === "win32") {
-      // Windows: find and kill process using the port
-      spawn("netstat", ["-ano"], { stdio: ["ignore", "pipe", "ignore"] })
-        .stdout?.on("data", (data) => {
-          const lines = data.toString().split("\n");
-          for (const line of lines) {
-            if (line.includes(`:${port}`) && line.includes("LISTENING")) {
-              const pid = line.trim().split(/\s+/).pop();
-              if (pid && pid !== String(process.pid)) {
-                spawn("taskkill", ["/F", "/PID", pid], { stdio: "ignore" });
-                console.log("[CTUBE] Killed old server PID:", pid);
-              }
+      spawn("netstat", ["-ano"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      }).stdout?.on("data", (data) => {
+        const lines = data.toString().split("\n");
+        for (const line of lines) {
+          if (line.includes(`:${port}`) && line.includes("LISTENING")) {
+            const pid = line.trim().split(/\s+/).pop();
+            if (pid && pid !== String(process.pid)) {
+              spawn("taskkill", ["/F", "/PID", pid], { stdio: "ignore" });
+              console.log("[CTUBE] Killed old server PID:", pid);
             }
           }
-        });
+        }
+      });
     } else {
-      // Unix: kill by port
       spawn("fuser", ["-k", `${port}/tcp`], { stdio: "ignore" });
     }
   } catch (e) {
-    // Ignore
-  }
-}
-
-function copyDirSync(src, dest) {
-  fs.mkdirSync(dest, { recursive: true });
-  const entries = fs.readdirSync(src, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = path.join(src, entry.name);
-    const destPath = path.join(dest, entry.name);
-    if (entry.isDirectory()) {
-      copyDirSync(srcPath, destPath);
-    } else {
-      fs.copyFileSync(srcPath, destPath);
-    }
+    /* ignore */
   }
 }
 
@@ -219,7 +239,7 @@ function loadingHTML(message) {
   return `<body style="font-family:system-ui;background:#0f0f0f;color:#f1f1f1;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center">
     <div>
       <div style="width:60px;height:60px;border:4px solid #333;border-top:4px solid #ff4e45;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 2rem"></div>
-      <h1 style="color:#ff4e45;font-size:2rem;margin-bottom:1rem">▶ CTUBE</h1>
+      <h1 style="color:#ff4e45;font-size:2rem;margin-bottom:1rem">&#9654; CTUBE</h1>
       <p style="color:#aaa;line-height:1.6">${message || "Carregando aplicativo..."}</p>
     </div>
     <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
@@ -241,9 +261,8 @@ function createWindow(url) {
     minWidth: 980,
     minHeight: 620,
     title: "CTUBE",
-    icon: path.join(__dirname, "..", "public", "icon.svg"),
     backgroundColor: "#0f0f0f",
-    show: false, // Don't show until ready
+    show: false,
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
@@ -251,12 +270,12 @@ function createWindow(url) {
     },
   });
 
-  // Show window when content is ready (avoids white flash)
+  // Show window only when content is ready
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
   });
 
-  // Retry loading on failure (max 3 retries)
+  // Retry on failure
   let retryCount = 0;
   const MAX_RETRIES = 3;
 
@@ -264,24 +283,29 @@ function createWindow(url) {
     mainWindow.loadURL(targetUrl);
   };
 
-  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDesc) => {
-    console.log("[CTUBE] Load failed:", errorCode, errorDesc);
-    if (retryCount < MAX_RETRIES) {
-      retryCount++;
-      console.log(`[CTUBE] Retrying (${retryCount}/${MAX_RETRIES})...`);
-      setTimeout(() => loadWithRetry(url), 2000);
-    } else {
-      mainWindow.loadURL(
-        "data:text/html;charset=utf-8," +
-          encodeURIComponent(loadingHTML(
-            `Não foi possível conectar ao CTUBE.<br/>Verifique sua conexão e reinicie o aplicativo.<br/><small style="opacity:.5">${errorDesc}</small>`
-          ))
-      );
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDesc) => {
+      console.log("[CTUBE] Load failed:", errorCode, errorDesc);
+      if (retryCount < MAX_RETRIES) {
+        retryCount++;
+        console.log(`[CTUBE] Retrying (${retryCount}/${MAX_RETRIES})...`);
+        setTimeout(() => loadWithRetry(url), 2000);
+      } else {
+        mainWindow.loadURL(
+          "data:text/html;charset=utf-8," +
+            encodeURIComponent(
+              loadingHTML(
+                `Não foi possível conectar ao CTUBE.<br/>Verifique sua conexão e reinicie o aplicativo.<br/><small style="opacity:.5">${errorDesc}</small>`
+              )
+            )
+        );
+      }
     }
-  });
+  );
 
   mainWindow.webContents.on("did-finish-load", () => {
-    retryCount = 0; // Reset on successful load
+    retryCount = 0;
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -313,32 +337,41 @@ app.whenReady().then(async () => {
     center: true,
     webPreferences: { contextIsolation: true },
   });
-  loadingWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(loadingHTML()));
+  loadingWin.loadURL(
+    "data:text/html;charset=utf-8," + encodeURIComponent(loadingHTML())
+  );
 
   try {
     await startNextServer();
     const url = CTUBE_URL || LOCAL_URL;
     console.log("[CTUBE] Loading:", url);
 
-    // Close loading window and show main window
     if (loadingWin && !loadingWin.isDestroyed()) loadingWin.close();
     createWindow(url);
   } catch (err) {
-    console.error("[CTUBE] Fatal:", err);
+    console.error("[CTUBE] Fatal:", err.message);
     if (loadingWin && !loadingWin.isDestroyed()) loadingWin.close();
 
-    const win = new BrowserWindow({
-      width: 800,
-      height: 600,
-      title: "CTUBE",
-      backgroundColor: "#0f0f0f",
-    });
-    win.loadURL(
-      "data:text/html;charset=utf-8," +
-        encodeURIComponent(loadingHTML(
-          `Ocorreu um erro ao iniciar.<br/>Tente reinstalar o aplicativo.<br/><small style="opacity:.5">${err.message}</small>`
-        ))
-    );
+    // If CTUBE_URL is available, try loading from web as fallback
+    if (CTUBE_URL) {
+      console.log("[CTUBE] Falling back to CTUBE_URL:", CTUBE_URL);
+      createWindow(CTUBE_URL);
+    } else {
+      const win = new BrowserWindow({
+        width: 800,
+        height: 600,
+        title: "CTUBE",
+        backgroundColor: "#0f0f0f",
+      });
+      win.loadURL(
+        "data:text/html;charset=utf-8," +
+          encodeURIComponent(
+            loadingHTML(
+              `Ocorreu um erro ao iniciar.<br/>Tente reinstalar o aplicativo.<br/><small style="opacity:.5">${err.message}</small>`
+            )
+          )
+      );
+    }
   }
 
   app.on("activate", () => {
@@ -366,13 +399,18 @@ function killServer() {
   if (serverProcess) {
     try {
       serverProcess.kill("SIGTERM");
-      // Force kill after 3 seconds if still alive
       setTimeout(() => {
         if (serverProcess && !serverProcess.killed) {
-          try { serverProcess.kill("SIGKILL"); } catch (e) { /* ignore */ }
+          try {
+            serverProcess.kill("SIGKILL");
+          } catch (e) {
+            /* ignore */
+          }
         }
       }, 3000);
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
     serverProcess = null;
   }
   killServerOnPort(LOCAL_PORT);

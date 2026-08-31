@@ -27,45 +27,72 @@ function SearchContent() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [continuation, setContinuation] = useState<string | undefined>();
   const [hasMore, setHasMore] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const fetchWithTimeout = useCallback(
+    async (url: string, timeoutMs = 15000) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        return await res.json();
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (query) {
       setVideos([]);
       setContinuation(undefined);
       setHasMore(true);
+      setError(null);
       setLoading(true);
       loadVideos(query);
     }
   }, [query]);
 
-  const loadVideos = useCallback(async (q: string, cont?: string) => {
-    try {
-      const url = cont
-        ? `/api/search?q=${encodeURIComponent(q)}&continuation=${encodeURIComponent(cont)}`
-        : `/api/search?q=${encodeURIComponent(q)}`;
-      const res = await fetch(url);
-      const data = await res.json();
+  const loadVideos = useCallback(
+    async (q: string, cont?: string) => {
+      try {
+        const url = cont
+          ? `/api/search?q=${encodeURIComponent(q)}&continuation=${encodeURIComponent(cont)}`
+          : `/api/search?q=${encodeURIComponent(q)}`;
+        const data = await fetchWithTimeout(url, 20000);
 
-      if (cont) {
-        setVideos((prev) => {
-          const ids = new Set(prev.map((v) => v.id));
-          const newVideos = (data.videos || []).filter((v: Video) => !ids.has(v.id));
-          return [...prev, ...newVideos];
-        });
-      } else {
-        setVideos(data.videos || []);
+        if (cont) {
+          setVideos((prev) => {
+            const ids = new Set(prev.map((v) => v.id));
+            const newVideos = (data.videos || []).filter(
+              (v: Video) => !ids.has(v.id)
+            );
+            return [...prev, ...newVideos];
+          });
+        } else {
+          setVideos(data.videos || []);
+        }
+
+        setContinuation(data.continuation);
+        setHasMore(
+          !!data.continuation && (data.videos?.length || 0) > 0
+        );
+      } catch (err) {
+        console.error("Search error:", err);
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setError("Tempo esgotado. Tente novamente.");
+        } else {
+          setError("Erro na busca. Tente novamente.");
+        }
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
       }
-
-      setContinuation(data.continuation);
-      setHasMore(!!data.continuation && (data.videos?.length || 0) > 0);
-    } catch (err) {
-      console.error("Search error:", err);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, []);
+    },
+    [fetchWithTimeout]
+  );
 
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore || !continuation || !query) return;
@@ -78,11 +105,17 @@ function SearchContent() {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
 
-    const scrollContainer = sentinel.closest("main") || sentinel.parentElement;
+    const scrollContainer =
+      sentinel.closest("main") || sentinel.parentElement;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !loadingMore && hasMore && continuation) {
+        if (
+          entries[0].isIntersecting &&
+          !loadingMore &&
+          hasMore &&
+          continuation
+        ) {
           loadMore();
         }
       },
@@ -102,18 +135,35 @@ function SearchContent() {
       <div className="flex items-center gap-2 mb-4 text-[var(--muted-foreground)]">
         <Search className="w-5 h-5" />
         <span className="text-sm">
-          Resultados para: <strong className="text-[var(--foreground)]">{query}</strong>
+          Resultados para:{" "}
+          <strong className="text-[var(--foreground)]">{query}</strong>
         </span>
       </div>
 
+      {error && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <p className="text-[var(--muted-foreground)] mb-4">{error}</p>
+          <button
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              loadVideos(query);
+            }}
+            className="px-4 py-2 rounded-full bg-[var(--primary)] text-white hover:opacity-90 transition-opacity"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
       {loading && <VideoGridSkeleton count={8} />}
 
-      {!loading && (
+      {!loading && !error && (
         <>
           <div className="space-y-1">
-            {videos.map((video) => (
+            {videos.map((video, index) => (
               <VideoCard
-                key={video.id}
+                key={`${video.id}-${index}`}
                 id={video.id}
                 title={video.title}
                 thumbnail={video.thumbnail}
