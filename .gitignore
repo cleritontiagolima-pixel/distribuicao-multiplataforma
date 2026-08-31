@@ -13,6 +13,8 @@ __v0_jsx-dev-runtime.ts
 node_modules
 .next/
 .DS_Store
+next-env.d.ts
+tsconfig.tsbuildinfo
 
 # Installer binaries (built by CI)
 installers/**/*.apk

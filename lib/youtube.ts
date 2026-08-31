@@ -28,6 +28,11 @@ async function getYT(): Promise<Innertube> {
   return yt;
 }
 
+// Reset singleton on error (token may have expired)
+function resetYT() {
+  yt = null;
+}
+
 // Timeout wrapper for any async operation
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -225,6 +230,7 @@ export async function getHomeFeed(
     return { videos, continuation };
   } catch (error) {
     console.error("Error fetching home feed:", error);
+    resetYT();
     return { videos: [] };
   }
 }
@@ -266,6 +272,7 @@ export async function searchVideos(
     return { videos, continuation };
   } catch (error) {
     console.error("Error searching videos:", error);
+    resetYT();
     return { videos: [] };
   }
 }
@@ -301,6 +308,7 @@ export async function getVideoDetails(
     };
   } catch (error) {
     console.error("Error fetching video details:", error);
+    resetYT();
     return null;
   }
 }
@@ -326,6 +334,7 @@ export async function getRelatedVideos(
     return videos;
   } catch (error) {
     console.error("Error fetching related videos:", error);
+    resetYT();
     return [];
   }
 }
@@ -342,6 +351,7 @@ export async function getTrending(): Promise<VideoItem[]> {
       .filter((v): v is VideoItem => v !== null);
   } catch (error) {
     console.error("Error fetching trending:", error);
+    resetYT();
     return [];
   }
 }

@@ -110,8 +110,8 @@ function startNextServer() {
     }
   }
 
-  // Kill any existing process on the port
-  killServerOnPort(LOCAL_PORT);
+  // Kill any existing process on the port and wait for it to release
+  await killServerOnPort(LOCAL_PORT);
 
   // Start the Next.js standalone server
   serverProcess = spawn(process.execPath, [serverFile], {
@@ -208,28 +208,41 @@ function waitForServer(url, timeoutMs) {
 }
 
 function killServerOnPort(port) {
-  try {
-    if (process.platform === "win32") {
-      spawn("netstat", ["-ano"], {
-        stdio: ["ignore", "pipe", "ignore"],
-      }).stdout?.on("data", (data) => {
-        const lines = data.toString().split("\n");
-        for (const line of lines) {
-          if (line.includes(`:${port}`) && line.includes("LISTENING")) {
-            const pid = line.trim().split(/\s+/).pop();
-            if (pid && pid !== String(process.pid)) {
-              spawn("taskkill", ["/F", "/PID", pid], { stdio: "ignore" });
-              console.log("[CTUBE] Killed old server PID:", pid);
+  return new Promise((resolve) => {
+    try {
+      if (process.platform === "win32") {
+        const child = spawn("netstat", ["-ano"], {
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        let killed = 0;
+        child.stdout?.on("data", (data) => {
+          const lines = data.toString().split("\n");
+          for (const line of lines) {
+            if (line.includes(`:${port}`) && line.includes("LISTENING")) {
+              const pid = line.trim().split(/\s+/).pop();
+              if (pid && pid !== String(process.pid)) {
+                spawn("taskkill", ["/F", "/PID", pid], { stdio: "ignore" });
+                console.log("[CTUBE] Killed old server PID:", pid);
+                killed++;
+              }
             }
           }
-        }
-      });
-    } else {
-      spawn("fuser", ["-k", `${port}/tcp`], { stdio: "ignore" });
+        });
+        child.on("close", () => {
+          // Give the OS a moment to release the port
+          setTimeout(resolve, killed > 0 ? 500 : 0);
+        });
+        child.on("error", () => setTimeout(resolve, 0));
+      } else {
+        const child = spawn("fuser", ["-k", `${port}/tcp`], { stdio: "ignore" });
+        child.on("close", () => setTimeout(resolve, 200));
+        child.on("error", () => setTimeout(resolve, 0));
+      }
+    } catch (e) {
+      /* ignore */
+      resolve();
     }
-  } catch (e) {
-    /* ignore */
-  }
+  });
 }
 
 // ============================================================
