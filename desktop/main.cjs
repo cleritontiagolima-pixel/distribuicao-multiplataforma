@@ -56,9 +56,9 @@ function copyDirSync(src, dest) {
 // ============================================================
 // NEXT.JS STANDALONE SERVER
 // ============================================================
-function startNextServer() {
+async function startNextServer() {
   // If CTUBE_URL is set, skip local server
-  if (CTUBE_URL) return Promise.resolve();
+  if (CTUBE_URL) return;
 
   const standaloneDir = getStandaloneDir();
   const serverFile = path.join(standaloneDir, "server.js");
@@ -69,16 +69,20 @@ function startNextServer() {
   if (!fs.existsSync(serverFile)) {
     // Log what's available for debugging
     try {
-      const basePath = app.isPackaged ? process.resourcesPath : path.join(__dirname, "..");
+      const basePath = app.isPackaged
+        ? process.resourcesPath
+        : path.join(__dirname, "..");
       const items = fs.readdirSync(basePath);
       console.log("[CTUBE] Available in basePath:", items.join(", "));
       if (fs.existsSync(path.join(basePath, "standalone"))) {
         const saItems = fs.readdirSync(path.join(basePath, "standalone"));
         console.log("[CTUBE] Available in standalone:", saItems.join(", "));
       }
-    } catch (e) { /* ignore */ }
-    return Promise.reject(
-      new Error("Next.js standalone server not found. Reinstall the app.")
+    } catch (e) {
+      /* ignore */
+    }
+    throw new Error(
+      "Next.js standalone server not found. Reinstall the app."
     );
   }
 
@@ -114,12 +118,13 @@ function startNextServer() {
   await killServerOnPort(LOCAL_PORT);
 
   // Start the Next.js standalone server
+  console.log("[CTUBE] Starting server:", serverFile);
   serverProcess = spawn(process.execPath, [serverFile], {
     cwd: standaloneDir,
     env: {
       ...process.env,
       PORT: String(LOCAL_PORT),
-      HOSTNAME: "127.0.0.1",
+      HOSTNAME: "0.0.0.0",
       NODE_ENV: "production",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -151,7 +156,7 @@ function startNextServer() {
     }
   });
 
-  return waitForServer(LOCAL_URL, 20000);
+  await waitForServer(LOCAL_URL, 30000);
 }
 
 function waitForServer(url, timeoutMs) {
@@ -181,13 +186,13 @@ function waitForServer(url, timeoutMs) {
           if (!resolved && res.statusCode && res.statusCode < 500) {
             resolved = true;
             clearTimeout(timeout);
-            console.log("[CTUBE] Server ready on", url);
+            console.log("[CTUBE] Server ready on", url, "(attempt", attempts, ")");
             resolve();
           } else if (!resolved) {
             setTimeout(check, 500);
           }
         })
-        .on("error", () => {
+        .on("error", (err) => {
           if (!resolved) {
             if (attempts >= maxAttempts) {
               resolved = true;
@@ -196,14 +201,17 @@ function waitForServer(url, timeoutMs) {
                 new Error("Servidor não conseguiu iniciar. Reinicie o app.")
               );
             } else {
+              if (attempts % 5 === 0) {
+                console.log("[CTUBE] Waiting for server... attempt", attempts);
+              }
               setTimeout(check, 500);
             }
           }
         });
     };
 
-    // Start checking after a short delay
-    setTimeout(check, 1500);
+    // Start checking after a short delay to give the server time to bind
+    setTimeout(check, 1000);
   });
 }
 
@@ -234,7 +242,9 @@ function killServerOnPort(port) {
         });
         child.on("error", () => setTimeout(resolve, 0));
       } else {
-        const child = spawn("fuser", ["-k", `${port}/tcp`], { stdio: "ignore" });
+        const child = spawn("fuser", ["-k", `${port}/tcp`], {
+          stdio: "ignore",
+        });
         child.on("close", () => setTimeout(resolve, 200));
         child.on("error", () => setTimeout(resolve, 0));
       }
