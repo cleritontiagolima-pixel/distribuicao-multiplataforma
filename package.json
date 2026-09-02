@@ -16,16 +16,16 @@
     ],
     "extraResources": [
       {
-        "from": ".next/standalone",
-        "to": "standalone"
+        "from": ".next/server/app",
+        "to": "static/.next/server/app"
       },
       {
         "from": ".next/static",
-        "to": "standalone/.next/static"
+        "to": "static/.next/static"
       },
       {
         "from": "public",
-        "to": "standalone/public"
+        "to": "static/public"
       }
     ],
     "asar": false,
