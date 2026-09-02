@@ -54,11 +54,6 @@ export default function HomePage() {
     []
   );
 
-  // Initial load
-  useEffect(() => {
-    loadVideos();
-  }, []);
-
   const loadVideos = useCallback(
     async (cont?: string) => {
       try {
@@ -109,11 +104,87 @@ export default function HomePage() {
     [fetchWithTimeout]
   );
 
+  const loadCategoryVideos = useCallback(
+    async (category: string, cont?: string) => {
+      try {
+        const url = cont
+          ? `/api/search?q=${encodeURIComponent(category)}&continuation=${encodeURIComponent(cont)}`
+          : `/api/search?q=${encodeURIComponent(category)}`;
+        const data = await fetchWithTimeout(url, 20000);
+
+        if (data.error) {
+          setError(data.error);
+          return;
+        }
+
+        const incoming = (data.videos || []) as Video[];
+        if (cont) {
+          setVideos((prev) => {
+            const ids = new Set(prev.map((v) => v.id));
+            const newVideos = incoming.filter((v) => !ids.has(v.id));
+            return [...prev, ...newVideos];
+          });
+        } else {
+          const seen = new Set<string>();
+          setVideos(
+            incoming.filter((v) => {
+              if (seen.has(v.id)) return false;
+              seen.add(v.id);
+              return true;
+            })
+          );
+        }
+
+        setContinuation(data.continuation);
+        setHasMore(
+          !!data.continuation && (data.videos?.length || 0) > 0
+        );
+      } catch (err) {
+        console.error("Failed to load category videos:", err);
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setError("Tempo esgotado. Verifique sua conexão e tente novamente.");
+        } else {
+          setError("Erro ao carregar vídeos. Tente novamente.");
+        }
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [fetchWithTimeout]
+  );
+
+  // Initial load
+  useEffect(() => {
+    loadVideos();
+  }, [loadVideos]);
+
+  // When category changes, reload videos
+  const handleCategoryChange = useCallback((category: string) => {
+    setSelectedCategory(category);
+    setVideos([]);
+    setContinuation(undefined);
+    setHasMore(true);
+    setError(null);
+    setLoading(true);
+    setTimeout(() => {
+      if (category === "Todos") {
+        loadVideos();
+      } else {
+        loadCategoryVideos(category);
+      }
+    }, 50);
+  }, [loadVideos, loadCategoryVideos]);
+
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore || !continuation) return;
     setLoadingMore(true);
-    loadVideos(continuation);
-  }, [loadingMore, hasMore, continuation, loadVideos]);
+    if (selectedCategory === "Todos") {
+      loadVideos(continuation);
+    } else {
+      loadCategoryVideos(selectedCategory, continuation);
+    }
+  }, [loadingMore, hasMore, continuation, loadVideos, loadCategoryVideos, selectedCategory]);
 
   // Infinite scroll with IntersectionObserver
   useEffect(() => {
@@ -153,7 +224,7 @@ export default function HomePage() {
           {/* Category chips */}
           <CategoryChips
             selected={selectedCategory}
-            onSelect={setSelectedCategory}
+            onSelect={handleCategoryChange}
           />
 
           {/* Error */}

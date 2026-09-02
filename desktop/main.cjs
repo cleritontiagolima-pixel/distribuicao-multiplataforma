@@ -218,43 +218,58 @@ function createServer() {
 
     const staticDir = getStaticDir();
     const publicDir = getPublicDir();
+    const serverAppDir = getServerAppDir();
+    const cleanPath = pathname.split("?")[0];
 
     // Check public directory first
-    let filePath = path.join(publicDir, pathname);
+    let filePath = path.join(publicDir, cleanPath);
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       return serveStaticFile(filePath, res);
     }
 
     // Check _next/static (CSS, JS bundles) -> maps to .next/static on disk
-    if (pathname.startsWith("/_next/static/")) {
+    if (cleanPath.startsWith("/_next/static/")) {
       const nextStaticDir = getNextStaticDir();
-      const relativePath = pathname.replace("/_next/static/", "");
+      const relativePath = cleanPath.replace("/_next/static/", "");
       filePath = path.join(nextStaticDir, relativePath);
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         return serveStaticFile(filePath, res);
       }
       // Fallback: try in staticDir
-      const diskPath = pathname.replace("/_next/", "/.next/");
+      const diskPath = cleanPath.replace("/_next/", "/.next/");
       filePath = path.join(staticDir, diskPath);
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         return serveStaticFile(filePath, res);
       }
     }
 
-    // Try direct file match (for standalone, files are at root level)
-    filePath = path.join(staticDir, pathname);
+    // Try direct file match
+    filePath = path.join(staticDir, cleanPath);
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       return serveStaticFile(filePath, res);
     }
 
-    // Try pre-rendered pages from .next/server/app/ FIRST
-    const serverAppDir = getServerAppDir();
-    if (fs.existsSync(serverAppDir)) {
-      // / -> .next/server/app/index.html
-      // /search -> .next/server/app/search.html (flat file)
-      // /trending -> .next/server/app/trending.html
-      const cleanPath = pathname.split("?")[0];
-      
+    // Handle _next/data routes for client-side navigation
+    if (cleanPath.startsWith("/_next/data/")) {
+      // Extract the page path from /_next/data/{buildId}/{page}.json
+      const afterData = cleanPath.replace("/_next/data/[^/]+/", "");
+      // Serve the corresponding pre-rendered HTML with correct content type
+      if (serverAppDir && fs.existsSync(serverAppDir)) {
+        const htmlFile = path.join(serverAppDir, afterData.replace(/\.json$/, ".html"));
+        if (fs.existsSync(htmlFile)) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ page: afterData.replace(/\.json$/, "") }));
+          return;
+        }
+      }
+      // Return minimal JSON to let client router proceed
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end("{}")
+      return;
+    }
+
+    // Try pre-rendered pages from .next/server/app/
+    if (serverAppDir && fs.existsSync(serverAppDir)) {
       // Try flat file: /trending -> trending.html
       const flatFile = path.join(serverAppDir, cleanPath.replace(/^\//, "") + ".html");
       if (fs.existsSync(flatFile)) {
@@ -276,10 +291,13 @@ function createServer() {
       }
     }
 
-    // SPA fallback: serve the main index.html
-    const rootIndex = path.join(serverAppDir, "index.html") || path.join(staticDir, "index.html");
-    if (fs.existsSync(rootIndex)) {
-      return serveStaticFile(rootIndex, res);
+    // SPA fallback: only for HTML page routes (no file extension)
+    const hasExtension = /\.[a-z0-9]{2,6}$/i.test(cleanPath);
+    if (!hasExtension) {
+      const rootIndex = path.join(serverAppDir, "index.html");
+      if (fs.existsSync(rootIndex)) {
+        return serveStaticFile(rootIndex, res);
+      }
     }
 
     res.writeHead(404);
