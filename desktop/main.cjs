@@ -1,6 +1,7 @@
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, Menu } = require("electron");
 const path = require("path");
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const url = require("url");
 
@@ -10,9 +11,17 @@ const url = require("url");
 const LOCAL_PORT = 3210;
 const LOCAL_URL = `http://localhost:${LOCAL_PORT}`;
 
+// Remote URL: try env var first, then hardcoded Vercel deployment
+const REMOTE_URL =
+  (process.env.CTUBE_URL && process.env.CTUBE_URL.trim()) ||
+  "https://distribuicao-multiplataforma.vercel.app";
+
+const ADMIN_EMAIL = "ctinformatic@gmail.com";
+
 let mainWindow = null;
 let httpServer = null;
 let isQuitting = false;
+let menuBarVisible = false;
 
 // ============================================================
 // SINGLE INSTANCE LOCK
@@ -34,15 +43,9 @@ if (!gotLock) {
 // ============================================================
 function getProjectRoot() {
   if (app.isPackaged) {
-    // Packaged: everything is in resources/static
     return path.join(process.resourcesPath, "static");
   }
-  // Development: project root is one level up from desktop/
   return path.join(__dirname, "..");
-}
-
-function getStaticDir() {
-  return getProjectRoot();
 }
 
 function getPublicDir() {
@@ -50,12 +53,10 @@ function getPublicDir() {
 }
 
 function getNextStaticDir() {
-  // .next/static/ is at the project root (not inside standalone)
   return path.join(getProjectRoot(), ".next", "static");
 }
 
 function getServerAppDir() {
-  // .next/server/app/ contains pre-rendered HTML pages
   return path.join(getProjectRoot(), ".next", "server", "app");
 }
 
@@ -101,17 +102,6 @@ function getYoutubeApi() {
   return ytApi;
 }
 
-function parseUrlParams(queryString) {
-  const params = {};
-  if (!queryString) return params;
-  const pairs = queryString.split("&");
-  for (const pair of pairs) {
-    const [key, value] = pair.split("=");
-    if (key) params[decodeURIComponent(key)] = decodeURIComponent(value || "");
-  }
-  return params;
-}
-
 async function handleApiRequest(req, res, pathname) {
   const api = getYoutubeApi();
   if (!api) {
@@ -121,7 +111,6 @@ async function handleApiRequest(req, res, pathname) {
   }
 
   try {
-    // CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -136,13 +125,10 @@ async function handleApiRequest(req, res, pathname) {
     const params = parsedUrl.query;
 
     if (pathname === "/api/videos" || pathname.startsWith("/api/videos/")) {
-      // /api/videos or /api/videos/[id]
       const idMatch = pathname.match(/^\/api\/videos\/([^/]+)$/);
-
       if (idMatch) {
         const videoId = idMatch[1];
         const type = params.type || "details";
-
         if (type === "related") {
           const videos = await api.getRelatedVideos(videoId);
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -162,7 +148,6 @@ async function handleApiRequest(req, res, pathname) {
       const query = params.q || "";
       const continuation = params.continuation || undefined;
       const type = params.type || "search";
-
       if (type === "suggestions") {
         const suggestions = await api.getSuggestions(query);
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -204,117 +189,116 @@ function serveStaticFile(filePath, res) {
 }
 
 // ============================================================
-// HTTP SERVER
+// EMBEDDED HTTP SERVER (fallback when no internet)
 // ============================================================
 function createServer() {
   return http.createServer(async (req, res) => {
-    const parsedUrl = url.parse(req.url, true);
-    const pathname = parsedUrl.pathname;
+    try {
+      const parsedUrl = url.parse(req.url, true);
+      const pathname = parsedUrl.pathname;
 
-    // Handle API routes
-    if (pathname.startsWith("/api/")) {
-      return handleApiRequest(req, res, pathname);
-    }
+      // Handle API routes
+      if (pathname.startsWith("/api/")) {
+        return handleApiRequest(req, res, pathname);
+      }
 
-    const staticDir = getStaticDir();
-    const publicDir = getPublicDir();
-    const serverAppDir = getServerAppDir();
-    const cleanPath = pathname.split("?")[0];
+      const publicDir = getPublicDir();
+      const serverAppDir = getServerAppDir();
+      const cleanPath = pathname.split("?")[0];
 
-    // Check public directory first
-    let filePath = path.join(publicDir, cleanPath);
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      return serveStaticFile(filePath, res);
-    }
-
-    // Check _next/static (CSS, JS bundles) -> maps to .next/static on disk
-    if (cleanPath.startsWith("/_next/static/")) {
-      const nextStaticDir = getNextStaticDir();
-      const relativePath = cleanPath.replace("/_next/static/", "");
-      filePath = path.join(nextStaticDir, relativePath);
+      // Check public directory first
+      let filePath = path.join(publicDir, cleanPath);
       if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         return serveStaticFile(filePath, res);
       }
-      // Fallback: try in staticDir
-      const diskPath = cleanPath.replace("/_next/", "/.next/");
-      filePath = path.join(staticDir, diskPath);
-      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        return serveStaticFile(filePath, res);
+
+      // Check _next/static (CSS, JS bundles)
+      if (cleanPath.startsWith("/_next/static/")) {
+        const nextStaticDir = getNextStaticDir();
+        const relativePath = cleanPath.replace("/_next/static/", "");
+        filePath = path.join(nextStaticDir, relativePath);
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          return serveStaticFile(filePath, res);
+        }
       }
-    }
 
-    // Try direct file match
-    filePath = path.join(staticDir, cleanPath);
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      return serveStaticFile(filePath, res);
-    }
+      // Handle _next/data routes for client-side navigation
+      if (cleanPath.startsWith("/_next/data/")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end("{}");
+        return;
+      }
 
-    // Handle _next/data routes for client-side navigation
-    if (cleanPath.startsWith("/_next/data/")) {
-      // Extract the page path from /_next/data/{buildId}/{page}.json
-      const afterData = cleanPath.replace("/_next/data/[^/]+/", "");
-      // Serve the corresponding pre-rendered HTML with correct content type
+      // Try pre-rendered pages from .next/server/app/
       if (serverAppDir && fs.existsSync(serverAppDir)) {
-        const htmlFile = path.join(serverAppDir, afterData.replace(/\.json$/, ".html"));
-        if (fs.existsSync(htmlFile)) {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ page: afterData.replace(/\.json$/, "") }));
-          return;
+        const flatFile = path.join(
+          serverAppDir,
+          cleanPath.replace(/^\//, "") + ".html"
+        );
+        if (fs.existsSync(flatFile)) {
+          return serveStaticFile(flatFile, res);
+        }
+        const dirFile = path.join(serverAppDir, cleanPath, "index.html");
+        if (fs.existsSync(dirFile)) {
+          return serveStaticFile(dirFile, res);
+        }
+        if (cleanPath === "/") {
+          const rootHtml = path.join(serverAppDir, "index.html");
+          if (fs.existsSync(rootHtml)) {
+            return serveStaticFile(rootHtml, res);
+          }
         }
       }
-      // Return minimal JSON to let client router proceed
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end("{}")
-      return;
-    }
 
-    // Try pre-rendered pages from .next/server/app/
-    if (serverAppDir && fs.existsSync(serverAppDir)) {
-      // Try flat file: /trending -> trending.html
-      const flatFile = path.join(serverAppDir, cleanPath.replace(/^\//, "") + ".html");
-      if (fs.existsSync(flatFile)) {
-        return serveStaticFile(flatFile, res);
-      }
-      
-      // Try directory: / -> index.html
-      const dirFile = path.join(serverAppDir, cleanPath, "index.html");
-      if (fs.existsSync(dirFile)) {
-        return serveStaticFile(dirFile, res);
-      }
-      
-      // Root
-      if (cleanPath === "/") {
-        const rootHtml = path.join(serverAppDir, "index.html");
-        if (fs.existsSync(rootHtml)) {
-          return serveStaticFile(rootHtml, res);
+      // SPA fallback: only for page routes (no file extension)
+      const hasExtension = /\.[a-z0-9]{2,6}$/i.test(cleanPath);
+      if (!hasExtension) {
+        // Try to serve the index.html for SPA routing
+        const rootIndex = path.join(serverAppDir, "index.html");
+        if (fs.existsSync(rootIndex)) {
+          return serveStaticFile(rootIndex, res);
         }
       }
-    }
 
-    // SPA fallback: only for HTML page routes (no file extension)
-    const hasExtension = /\.[a-z0-9]{2,6}$/i.test(cleanPath);
-    if (!hasExtension) {
-      const rootIndex = path.join(serverAppDir, "index.html");
-      if (fs.existsSync(rootIndex)) {
-        return serveStaticFile(rootIndex, res);
-      }
+      res.writeHead(404);
+      res.end("Not found");
+    } catch (err) {
+      console.error("[CTUBE] Server error:", err.message);
+      res.writeHead(500);
+      res.end("Internal error");
     }
-
-    res.writeHead(404);
-    res.end("Not found");
   });
 }
 
 // ============================================================
-// WAIT FOR SERVER
+// REMOTE URL CHECK
 // ============================================================
-function waitForServer(port, timeoutMs) {
+function checkRemoteUrl(remoteUrl) {
+  return new Promise((resolve) => {
+    const client = remoteUrl.startsWith("https") ? https : http;
+    const req = client
+      .get(remoteUrl, { timeout: 8000 }, (res) => {
+        res.resume();
+        resolve(res.statusCode < 400);
+      })
+      .on("error", () => resolve(false))
+      .on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+  });
+}
+
+// ============================================================
+// WAIT FOR LOCAL SERVER
+// ============================================================
+function waitForLocalServer(port, timeoutMs) {
   return new Promise((resolve, reject) => {
     let resolved = false;
     const timeout = setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        reject(new Error("O servidor não respondeu a tempo."));
+        reject(new Error("Local server did not respond in time."));
       }
     }, timeoutMs);
 
@@ -328,7 +312,7 @@ function waitForServer(port, timeoutMs) {
           if (!resolved && res.statusCode && res.statusCode < 500) {
             resolved = true;
             clearTimeout(timeout);
-            console.log("[CTUBE] Server ready on port", port, "(attempt", attempts, ")");
+            console.log("[CTUBE] Local server ready on port", port);
             resolve();
           } else if (!resolved) {
             setTimeout(check, 300);
@@ -336,10 +320,10 @@ function waitForServer(port, timeoutMs) {
         })
         .on("error", () => {
           if (!resolved) {
-            if (attempts >= 60) {
+            if (attempts >= 40) {
               resolved = true;
               clearTimeout(timeout);
-              reject(new Error("Servidor não conseguiu iniciar. Reinicie o app."));
+              reject(new Error("Local server failed to start."));
             } else {
               setTimeout(check, 300);
             }
@@ -355,7 +339,9 @@ function waitForServer(port, timeoutMs) {
 // LOADING HTML
 // ============================================================
 function loadingHTML(message) {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>CTUBE</title></head><body style="font-family:system-ui;background:#0f0f0f;color:#f1f1f1;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center">
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>CTUBE</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23ff4e45'/><polygon points='40,25 40,75 80,50' fill='white'/></svg>">
+</head><body style="font-family:system-ui;background:#0f0f0f;color:#f1f1f1;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center">
     <div>
       <div style="width:60px;height:60px;border:4px solid #333;border-top:4px solid #ff4e45;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 2rem"></div>
       <h1 style="color:#ff4e45;font-size:2rem;margin-bottom:1rem">&#9654; CTUBE</h1>
@@ -366,7 +352,66 @@ function loadingHTML(message) {
 }
 
 // ============================================================
-// WINDOW
+// BUILD APPLICATION MENU
+// ============================================================
+function buildMenu(isAdmin) {
+  if (!isAdmin) {
+    Menu.setApplicationMenu(null);
+    menuBarVisible = false;
+    return;
+  }
+
+  // Admin menu — only for the developer
+  const template = [
+    {
+      label: "File",
+      submenu: [
+        { label: "Recarregar", accelerator: "CmdOrCtrl+R", click: () => mainWindow && mainWindow.reload() },
+        { label: "DevTools", accelerator: "CmdOrCtrl+Shift+I", click: () => mainWindow && mainWindow.webContents.toggleDevTools() },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        { role: "close" },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  menuBarVisible = true;
+}
+
+// ============================================================
+// CREATE WINDOW
 // ============================================================
 function createWindow(targetUrl) {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -374,20 +419,39 @@ function createWindow(targetUrl) {
     return mainWindow;
   }
 
+  // Resolve icon path
+  let iconPath;
+  if (app.isPackaged) {
+    iconPath = path.join(process.resourcesPath, "static", "public", "icon.svg");
+  } else {
+    iconPath = path.join(__dirname, "..", "public", "icon.svg");
+  }
+  // Fallback to .png if .svg not found
+  if (!fs.existsSync(iconPath)) {
+    iconPath = iconPath.replace(".svg", ".png");
+  }
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 980,
     minHeight: 620,
-    title: "CTUBE",
+    title: "CTUBE — vídeo sem ruído",
     backgroundColor: "#0f0f0f",
+    icon: fs.existsSync(iconPath) ? iconPath : undefined,
     show: false,
+    autoHideMenuBar: true,
+    menuBarVisible: false,
     webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
-      sandbox: true,
+      sandbox: false,
       backgroundThrottling: false,
     },
   });
+
+  // Start with no menu (admin can show it via IPC)
+  Menu.setApplicationMenu(null);
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
@@ -404,7 +468,11 @@ function createWindow(targetUrl) {
     } else {
       mainWindow.loadURL(
         "data:text/html;charset=utf-8," +
-          encodeURIComponent(loadingHTML(`Não foi possível conectar ao CTUBE.<br/>Verifique sua conexão e reinicie.<br/><small style="opacity:.5">${errorDesc}</small>`))
+          encodeURIComponent(
+            loadingHTML(
+              `Não foi possível conectar ao CTUBE.<br/>Verifique sua conexão e reinicie.<br/><small style="opacity:.5">${errorDesc}</small>`
+            )
+          )
       );
     }
   });
@@ -427,10 +495,28 @@ function createWindow(targetUrl) {
 }
 
 // ============================================================
+// IPC HANDLERS
+// ============================================================
+ipcMain.on("show-menu-bar", () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setMenuBarVisibility(true);
+    menuBarVisible = true;
+  }
+});
+
+ipcMain.on("hide-menu-bar", () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setMenuBarVisibility(false);
+    Menu.setApplicationMenu(null);
+    menuBarVisible = false;
+  }
+});
+
+// ============================================================
 // APP LIFECYCLE
 // ============================================================
 app.whenReady().then(async () => {
-  // Show loading screen
+  // Show loading screen immediately
   const loadingWin = new BrowserWindow({
     width: 500,
     height: 400,
@@ -440,6 +526,7 @@ app.whenReady().then(async () => {
     skipTaskbar: true,
     resizable: false,
     center: true,
+    title: "CTUBE",
     webPreferences: { contextIsolation: true },
   });
   loadingWin.loadURL(
@@ -447,52 +534,69 @@ app.whenReady().then(async () => {
   );
 
   try {
-    // Start the embedded HTTP server
-    httpServer = createServer();
+    let targetUrl;
 
-    await new Promise((resolve, reject) => {
-      httpServer.on("error", (err) => {
-        console.error("[CTUBE] Server error:", err.message);
-        reject(err);
+    // Strategy 1: Try remote URL first (fast, works everywhere)
+    console.log("[CTUBE] Checking remote URL:", REMOTE_URL);
+    const remoteAvailable = await checkRemoteUrl(REMOTE_URL);
+
+    if (remoteAvailable) {
+      console.log("[CTUBE] Remote URL is available, using it");
+      targetUrl = REMOTE_URL;
+    } else {
+      // Strategy 2: Start embedded local server
+      console.log("[CTUBE] Remote unavailable, starting local server...");
+      httpServer = createServer();
+
+      await new Promise((resolve, reject) => {
+        httpServer.on("error", (err) => {
+          console.error("[CTUBE] Server error:", err.message);
+          reject(err);
+        });
+        httpServer.listen(LOCAL_PORT, "127.0.0.1", () => {
+          console.log("[CTUBE] Server listening on port", LOCAL_PORT);
+          resolve();
+        });
       });
 
-      httpServer.listen(LOCAL_PORT, "127.0.0.1", () => {
-        console.log("[CTUBE] Server listening on port", LOCAL_PORT);
-        resolve();
-      });
-    });
+      await waitForLocalServer(LOCAL_PORT, 20000);
+      targetUrl = LOCAL_URL;
+    }
 
-    // Wait for the server to be fully ready
-    await waitForServer(LOCAL_PORT, 15000);
-
-    console.log("[CTUBE] Loading app from", LOCAL_URL);
+    console.log("[CTUBE] Loading app from", targetUrl);
 
     if (loadingWin && !loadingWin.isDestroyed()) loadingWin.close();
-    createWindow(LOCAL_URL);
+    createWindow(targetUrl);
   } catch (err) {
     console.error("[CTUBE] Fatal:", err.message);
     if (loadingWin && !loadingWin.isDestroyed()) loadingWin.close();
 
-    // Show error window
-    const win = new BrowserWindow({
-      width: 800,
-      height: 600,
-      title: "CTUBE",
-      backgroundColor: "#0f0f0f",
-    });
-    win.loadURL(
-      "data:text/html;charset=utf-8," +
-        encodeURIComponent(
-          loadingHTML(
-            `Ocorreu um erro ao iniciar.<br/>Tente reinstalar o aplicativo.<br/><small style="opacity:.5">${err.message}</small>`
+    // Last resort: try loading remote URL directly
+    try {
+      console.log("[CTUBE] Attempting direct remote load as last resort");
+      if (loadingWin && !loadingWin.isDestroyed()) loadingWin.close();
+      createWindow(REMOTE_URL);
+    } catch (err2) {
+      const win = new BrowserWindow({
+        width: 800,
+        height: 600,
+        title: "CTUBE",
+        backgroundColor: "#0f0f0f",
+      });
+      win.loadURL(
+        "data:text/html;charset=utf-8," +
+          encodeURIComponent(
+            loadingHTML(
+              `Ocorreu um erro ao iniciar.<br/>Tente reinstalar o aplicativo.<br/><small style="opacity:.5">${err.message}</small>`
+            )
           )
-        )
-    );
+      );
+    }
   }
 
   app.on("activate", () => {
     if (!mainWindow || mainWindow.isDestroyed()) {
-      createWindow(LOCAL_URL);
+      createWindow(REMOTE_URL);
     } else {
       mainWindow.show();
     }

@@ -12,7 +12,8 @@
     "files": [
       "desktop/**/*",
       "package.json",
-      "public/**/*"
+      "public/**/*",
+      "!desktop/*.map"
     ],
     "extraResources": [
       {

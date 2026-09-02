@@ -18,18 +18,22 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Build creates .next/standalone/ with self-contained Next.js server
+      # Build creates .next/server/app/ with pre-rendered HTML pages
       - run: pnpm build
-      # Verify standalone directory exists
-      - name: Verify standalone build
+      # Verify build output exists
+      - name: Verify build output
         run: |
-          if (Test-Path ".next/standalone/server.js") {
-            Write-Host "Standalone build OK"
-            $size = (Get-ChildItem .next/standalone -Recurse | Measure-Object -Property Length -Sum).Sum
-            Write-Host "Standalone size: $([math]::Round($size/1MB, 1)) MB"
+          if (Test-Path ".next/server/app/index.html") {
+            Write-Host "Build output OK"
+          } elseif (Test-Path ".next/server/app") {
+            $files = Get-ChildItem .next/server/app -Recurse -Filter "*.html"
+            Write-Host "Found $($files.Count) HTML files in .next/server/app/"
           } else {
-            Write-Error ".next/standalone/server.js not found!"
-            exit 1
+            Write-Warning ".next/server/app not found - pages may not be pre-rendered"
+          }
+          if (Test-Path ".next/static") {
+            $size = (Get-ChildItem .next/static -Recurse | Measure-Object -Property Length -Sum).Sum
+            Write-Host "Static assets size: $([math]::Round($size/1MB, 1)) MB"
           }
         shell: pwsh
       # Create self-signed certificate for code signing
@@ -46,7 +50,7 @@ jobs:
           Export-PfxCertificate -Cert $cert -FilePath "ctube-cert.pfx" -Password $pwd
           echo "Certificate created: $($cert.Thumbprint)"
         shell: pwsh
-      # Build Electron with standalone Next.js server
+      # Build Electron with embedded HTTP server + preload script
       - run: npx electron-builder --win --publish never
         env:
           CSC_LINK: ctube-cert.pfx

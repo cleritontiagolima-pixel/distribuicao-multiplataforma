@@ -1,7 +1,7 @@
-import { Analytics } from "@vercel/analytics/next";
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ServiceWorkerRegister from "./sw-register";
+import VercelAnalytics from "./VercelAnalytics";
 
 export const metadata: Metadata = {
   title: "CTUBE — vídeo sem ruído",
@@ -62,7 +62,7 @@ export default function RootLayout({
       <body className="min-h-screen antialiased">
         <ServiceWorkerRegister />
         {children}
-        <Analytics />
+        <VercelAnalytics />
       </body>
     </html>
   );

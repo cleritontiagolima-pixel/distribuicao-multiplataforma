@@ -63,6 +63,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setUser(getCurrentUser());
   }, []);
 
+  // Electron: show menu bar only for admin user
+  useEffect(() => {
+    if (typeof window !== "undefined" && (window as any).electronAPI) {
+      if (user && user.email === "ctinformatic@gmail.com") {
+        (window as any).electronAPI.showMenuBar();
+      } else {
+        (window as any).electronAPI.hideMenuBar();
+      }
+    }
+  }, [user]);
+
   // Close mobile menu on route change
   useEffect(() => {
     setMobileMenuOpen(false);
