@@ -1,5 +1,5 @@
 // CTUBE Service Worker - Basic offline caching
-const CACHE_NAME = "ctube-v1";
+const CACHE_NAME = "ctube-v2";
 const STATIC_ASSETS = ["/", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -23,14 +23,17 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  // Only cache GET requests
   if (event.request.method !== "GET") return;
 
-  // Don't cache API requests or YouTube embeds
+  const url = new URL(event.request.url);
+
+  // Don't cache API requests, YouTube, or non-same-origin
   if (
-    event.request.url.includes("/api/") ||
-    event.request.url.includes("youtube.com") ||
-    event.request.url.includes("ytimg.com")
+    url.pathname.startsWith("/api/") ||
+    url.hostname.includes("youtube.com") ||
+    url.hostname.includes("ytimg.com") ||
+    url.hostname.includes("ggpht.com") ||
+    url.origin !== self.location.origin
   ) {
     return;
   }
@@ -39,9 +42,36 @@ self.addEventListener("fetch", (event) => {
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
+        // Only cache successful responses with correct content types
         if (response.status === 200) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          const contentType = response.headers.get("content-type") || "";
+          // Don't cache HTML responses for script/style requests
+          const isScriptRequest = url.pathname.endsWith(".js") || url.pathname.endsWith(".mjs");
+          const isStyleRequest = url.pathname.endsWith(".css");
+          const isHtmlResponse = contentType.includes("text/html");
+
+          if ((isScriptRequest || isStyleRequest) && isHtmlResponse) {
+            // Server returned HTML for a JS/CSS request - don't cache
+            return response;
+          }
+
+          // Only cache actual static assets
+          if (
+            url.pathname.startsWith("/_next/static/") ||
+            url.pathname.startsWith("/static/") ||
+            STATIC_ASSETS.includes(url.pathname) ||
+            url.pathname.endsWith(".js") ||
+            url.pathname.endsWith(".css") ||
+            url.pathname.endsWith(".png") ||
+            url.pathname.endsWith(".jpg") ||
+            url.pathname.endsWith(".svg") ||
+            url.pathname.endsWith(".ico") ||
+            url.pathname.endsWith(".woff") ||
+            url.pathname.endsWith(".woff2")
+          ) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
         }
         return response;
       });

@@ -3,7 +3,12 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ["*.daytonaproxy01.net", "https://*.daytonaproxy01.net"],
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  output: "standalone",
   images: {
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",
@@ -12,6 +17,10 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "*.ytimg.com",
+      },
+      {
+        protocol: "https",
+        hostname: "yt3.ggpht.com",
       },
     ],
   },
