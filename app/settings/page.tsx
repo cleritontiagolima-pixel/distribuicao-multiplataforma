@@ -8,6 +8,7 @@ import { Settings, Trash2, LogOut, Info, ShieldCheck, KeyRound } from "lucide-re
 import { cn } from "@/lib/utils";
 import { APP_VERSION, OWNER_EMAIL } from "@/lib/constants";
 import { getStoredLicense, licenseDaysLeft } from "@/lib/owner";
+import Link from "next/link";
 
 export default function SettingsPage() {
   const [user, setUser] = useState<ReturnType<typeof getCurrentUser>>(null);
@@ -81,18 +82,24 @@ export default function SettingsPage() {
               <div className="rounded-xl border border-[var(--border)] p-4" style={{ background: "var(--card)" }}>
                 <div className="flex items-center gap-2 mb-2">
                   <KeyRound className="w-4 h-4 text-[var(--primary)]" />
-                  <h2 className="font-medium">Sua licença</h2>
+                  <h2 className="font-medium">Sua licença Premium</h2>
                 </div>
                 <p className="text-sm text-[var(--muted-foreground)]">
                   {days > 0 ? (
                     <>
                       Ativa para <b className="text-[var(--foreground)]">{license.email}</b> — restam{" "}
-                      {days} dia(s).
+                      {days} dia(s). Downloads offline liberados neste aparelho.
                     </>
                   ) : (
-                    <>Expirou. Renove pelo contato do desenvolvedor para continuar usando o CTUBE.</>
+                    <>Expirou. Renove pelo contato do desenvolvedor para continuar baixando áudio offline.</>
                   )}
                 </p>
+                <Link
+                  href="/downloads"
+                  className="inline-block mt-3 text-sm text-[var(--primary)] hover:underline"
+                >
+                  Ver meus downloads
+                </Link>
               </div>
             );
           })()}

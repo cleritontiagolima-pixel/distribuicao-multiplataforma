@@ -10,6 +10,13 @@ jobs:
       contents: write
     env:
       CTUBE_URL: ${{ secrets.CTUBE_URL }}
+      # Optional persisted code-signing certificate (base64 PFX) + password.
+      # If provided, every build uses the SAME certificate, so the publisher
+      # name stays stable across updates and SmartScreen builds reputation.
+      # Without them a fresh self-signed certificate is generated per build
+      # (works, but Windows will always show the "unknown publisher" warning).
+      WIN_CERT_B64: ${{ secrets.WIN_CERT_B64 }}
+      WIN_CERT_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
@@ -38,8 +45,18 @@ jobs:
             Write-Host "Static assets size: $([math]::Round($size/1MB, 1)) MB"
           }
         shell: pwsh
-      # Create self-signed certificate for code signing
-      - name: Create code signing certificate
+      # Use the persisted certificate when configured (stable publisher across
+      # updates); otherwise generate a fresh self-signed one so the build can
+      # still be produced.
+      - name: Import code signing certificate
+        if: env.WIN_CERT_B64 != ''
+        run: |
+          $bytes = [Convert]::FromBase64String($env:WIN_CERT_B64)
+          [IO.File]::WriteAllBytes("ctube-cert.pfx", $bytes)
+          Write-Host "Certificate imported from WIN_CERT_B64 secret"
+        shell: pwsh
+      - name: Create self-signed certificate
+        if: env.WIN_CERT_B64 == ''
         run: |
           $cert = New-SelfSignedCertificate `
             -Type CodeSigningCert `
@@ -48,15 +65,35 @@ jobs:
             -NotAfter (Get-Date).AddYears(5) `
             -KeyAlgorithm RSA `
             -KeyLength 2048
-          $pwd = ConvertTo-SecureString -String "ctube123" -Force -AsPlainText
-          Export-PfxCertificate -Cert $cert -FilePath "ctube-cert.pfx" -Password $pwd
+          $pfxPass = ConvertTo-SecureString -String "ctube123" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath "ctube-cert.pfx" -Password $pfxPass
           echo "Certificate created: $($cert.Thumbprint)"
         shell: pwsh
+      # Optionally bake plan/license secret into the desktop app. Without
+      # this, the packaged app treats itself as plan=free with the dev secret
+      # when running OFFLINE against its local server. Set the CTUBE_PLAN and
+      # CTUBE_LICENSE_SECRET secrets to enforce paid mode + production codes
+      # even fully offline.
+      - name: Bake desktop config (optional)
+        shell: pwsh
+        run: |
+          $cfg = @{}
+          if ($env:CTUBE_PLAN) { $cfg.plan = $env:CTUBE_PLAN }
+          if ($env:CTUBE_LICENSE_SECRET) { $cfg.licenseSecret = $env:CTUBE_LICENSE_SECRET }
+          if ($cfg.Count -gt 0) {
+            $cfg | ConvertTo-Json | Set-Content -Path desktop/baked-config.json -Encoding ascii
+            Write-Host "Baked desktop config: $($cfg | ConvertTo-Json -Compress)"
+          } else {
+            Write-Host "No CTUBE_PLAN/CTUBE_LICENSE_SECRET secrets - desktop defaults to plan=free (dev secret)"
+          }
+        env:
+          CTUBE_PLAN: ${{ secrets.CTUBE_PLAN }}
+          CTUBE_LICENSE_SECRET: ${{ secrets.CTUBE_LICENSE_SECRET }}
       # Build Electron with embedded HTTP server + preload script
       - run: npx electron-builder --win --publish never
         env:
           CSC_LINK: ctube-cert.pfx
-          CSC_KEY_PASSWORD: ctube123
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD || 'ctube123' }}
       # Copy correct installer (not uninstaller)
       - name: Copy installer to installers folder
         run: |
@@ -76,18 +113,33 @@ jobs:
           path: installers/windows/CTUBE-Setup.exe
           if-no-files-found: error
       # On tag pushes (v1.x.x), publish the installer to a GitHub Release so
-      # the in-app "nova versão" update alert can point at it.
+      # the in-app "nova versão" update alert can point at it. The three
+      # workflows run in parallel on the same tag, so this is idempotent:
+      # "create" ignores "already exists" errors and "upload --clobber"
+      # attaches/replaces our asset on the shared release.
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
           Write-Host "Publishing $tag"
-          gh release create $tag installers/windows/CTUBE-Setup.exe --title "CTUBE $tag" --generate-notes --clobber
+          gh release create $tag --title "CTUBE $tag" --generate-notes 2>&1 | Out-Null
+          gh release upload $tag installers/windows/CTUBE-Setup.exe --clobber
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "Release exists, uploading asset..."
-            gh release upload $tag installers/windows/CTUBE-Setup.exe --clobber
+            Write-Host "::warning::gh release upload failed for $tag"
           }
-          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::gh release upload failed"; exit 0 }
         env:
           GH_TOKEN: ${{ github.token }}
+      # Final gate: after publishing, verify the tag's release has ALL platform
+      # installers. The three workflows run in parallel on the same tag, so this
+      # waits (polling) for the Android .apk and iOS .zip/.ipa to be uploaded by
+      # their workflows. Fails loudly if any is missing (e.g. another build
+      # failed) instead of shipping a broken release.
+      - name: Verify release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          node scripts/check-release-assets.mjs --tag "${{ github.ref_name }}" --wait 30
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

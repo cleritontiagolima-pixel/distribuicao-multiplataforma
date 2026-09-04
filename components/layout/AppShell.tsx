@@ -19,6 +19,7 @@ import {
   LogOut,
   Play,
   TrendingUp,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getCurrentUser, logout, type User as UserType } from "@/lib/storage";
@@ -47,6 +48,7 @@ const navItems = [
   { icon: PlaySquare, label: "Suas playlists", href: "/playlists", auth: true },
   { icon: ThumbsUp, label: "Vídeos curtidos", href: "/liked", auth: true },
   { icon: ListVideo, label: "Assistir mais tarde", href: "/watch-later", auth: true },
+  { icon: Download, label: "Downloads", href: "/downloads" },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {

@@ -349,6 +349,114 @@ function formatDurationFromSeconds(seconds) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// ---------------------------------------------------------------------------
+// OFFLINE DOWNLOADS (audio only)
+// Resolves the best audio-only stream URL and fetches byte ranges. Used by
+// the local server's /api/download/* endpoints so downloads keep working
+// with no internet.
+// ---------------------------------------------------------------------------
+const streamCache = new Map(); // videoId -> { at, stream }
+const STREAM_TTL = 10 * 60 * 1000;
+
+function pickAudioFormat(info) {
+  const adaptive =
+    info?.streaming_data?.adaptive_formats || info?.streamingData?.adaptive_formats;
+  if (Array.isArray(adaptive)) {
+    const audioOnly = adaptive.filter(
+      (f) => f && f.has_audio && !f.has_video && (f.url || f.signature_cipher || f.cipher)
+    );
+    if (audioOnly.length) {
+      // Prefer m4a (audio/mp4): iOS WebViews have limited WebM/Opus support.
+      const pool = audioOnly.filter((f) =>
+        String(f.mime_type || f.mimeType || "").includes("audio/mp4")
+      );
+      const chosen = (pool.length ? pool : audioOnly).sort(
+        (a, b) => (b.bitrate || 0) - (a.bitrate || 0)
+      )[0];
+      const url =
+        chosen.url ||
+        (chosen.signature_cipher &&
+          decodeURIComponent(chosen.signature_cipher.split("&url=")[1] || "")) ||
+        (chosen.cipher && decodeURIComponent(chosen.cipher.split("&url=")[1] || "")) ||
+        "";
+      if (url) {
+        return {
+          url,
+          mimeType: String(chosen.mime_type || chosen.mimeType || "audio/mp4"),
+          size: parseInt(chosen.content_length || chosen.contentLength || "0", 10) || 0,
+        };
+      }
+    }
+  }
+  try {
+    const fmt = info.chooseFormat?.({ type: "audio", quality: "best" });
+    if (fmt?.url) {
+      return {
+        url: fmt.url,
+        mimeType: String(fmt.mime_type || fmt.mimeType || "audio/mp4"),
+        size: parseInt(fmt.content_length || fmt.contentLength || "0", 10) || 0,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+async function resolveAudioStream(videoId) {
+  const hit = streamCache.get(videoId);
+  if (hit && Date.now() - hit.at < STREAM_TTL) return hit.stream;
+
+  const ytm = await withTimeout(getYT(), YT_TIMEOUT);
+  let lastErr = new Error("no-audio-format");
+  // Try WEB first, then retry once with the TV client (richer adaptive formats).
+  for (const client of [undefined, "TV"]) {
+    try {
+      const info = client
+        ? await withTimeout(ytm.getInfo(videoId, "TV"), 15000)
+        : await withTimeout(ytm.getInfo(videoId), 15000);
+      const fmt = pickAudioFormat(info);
+      if (!fmt) {
+        lastErr = new Error("no-audio-format");
+        continue;
+      }
+      const stream = {
+        url: fmt.url,
+        mimeType: fmt.mimeType,
+        size: fmt.size,
+        title: info.basic_info?.title || "",
+        duration: typeof info.basic_info?.duration === "number" ? info.basic_info.duration : undefined,
+      };
+      streamCache.set(videoId, { at: Date.now(), stream });
+      return stream;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+async function fetchAudioRange(videoId, start, end) {
+  const stream = await resolveAudioStream(videoId);
+  const total = stream.size || end + 1;
+  const safeEnd = Math.min(end, Math.max(total - 1, start));
+  const res = await withTimeout(
+    fetch(stream.url, {
+      headers: {
+        Range: `bytes=${start}-${safeEnd}`,
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+      },
+    }),
+    15000
+  );
+  // 416 = range past the end of the stream → treat as "done" (empty buffer).
+  if (res.status === 416) return { buffer: new ArrayBuffer(0), total };
+  if (!res.ok && res.status !== 206) throw new Error(`stream-http-${res.status}`);
+  const buffer = await res.arrayBuffer();
+  return { buffer, total };
+}
+
 module.exports = {
   getHomeFeed,
   searchVideos,
@@ -356,4 +464,6 @@ module.exports = {
   getRelatedVideos,
   getTrending,
   getSuggestions,
+  resolveAudioStream,
+  fetchAudioRange,
 };

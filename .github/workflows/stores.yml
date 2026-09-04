@@ -1,0 +1,201 @@
+name: CTUBE Store Publishing (Google Play + TestFlight)
+# Publica o CTUBE nas lojas oficiais:
+#  - Google Play: AAB assinado com a keystore de release (ANDROID_KEYSTORE_*) e,
+#    quando SERVICE_ACCOUNT_JSON existe, upload direto para o track "internal".
+#  - Apple TestFlight: IPA assinado (app-store) e, quando APPLE_API_KEY* existem,
+#    upload direto para o App Store Connect via altool.
+# Sem os secrets de loja, os jobs apenas geram os artefatos (AAB/IPA assinados).
+# Guia completo: PUBLICACAO-LOJAS.md
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  google-play:
+    name: Google Play (AAB)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+      SERVICE_ACCOUNT_JSON: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Prepare Capacitor shell
+        run: node scripts/prepare-mobile-shell.mjs
+        env:
+          CTUBE_URL: ${{ secrets.CTUBE_URL }}
+      - run: npx cap add android || true
+      - run: npx cap sync android
+      - name: Patch Android background playback permissions
+        run: node scripts/patch-android-background.mjs
+      # versionCode/versionName + assinatura de release a partir dos secrets.
+      - name: Patch Android release signing config
+        run: node scripts/patch-android-signing.mjs
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Build release AAB
+        run: cd android && ./gradlew bundleRelease
+      - name: Upload AAB to Google Play (internal track)
+        if: env.SERVICE_ACCOUNT_JSON != '' && env.ANDROID_KEYSTORE_B64 != ''
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJson: ${{ secrets.SERVICE_ACCOUNT_JSON }}
+          packageName: app.ctube.player
+          releaseFile: android/app/build/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed
+      - name: Upload AAB artifact
+        if: env.SERVICE_ACCOUNT_JSON == '' || env.ANDROID_KEYSTORE_B64 == ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: CTUBE-Play-AAB
+          path: android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+  testflight:
+    name: Apple TestFlight (IPA)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    env:
+      CERTIFICATE_OSX_APPLICATION: ${{ secrets.CERTIFICATE_OSX_APPLICATION }}
+      CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+      PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Prepare Capacitor shell
+        run: node scripts/prepare-mobile-shell.mjs
+        env:
+          CTUBE_URL: ${{ secrets.CTUBE_URL }}
+      - run: npx cap add ios || true
+      - run: npx cap sync ios
+      - name: Patch iOS background audio
+        run: node scripts/patch-ios-background.mjs
+      # TestFlight exige assinatura (App Store Distribution). Sem os secrets da
+      # conta Apple, o job termina sem fazer nada — o ios.yml já gera o build
+      # sem assinatura para simulador.
+      - name: Check Apple signing configured
+        if: env.CERTIFICATE_OSX_APPLICATION == ''
+        run: |
+          echo "::warning::Secrets de assinatura Apple não configurados (CERTIFICATE_OSX_APPLICATION) — nada a enviar para o TestFlight."
+          exit 0
+      - name: Import Apple signing certificate
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
+        run: |
+          CERT_PATH="$RUNNER_TEMP/apple_cert.p12"
+          echo "$CERTIFICATE_OSX_APPLICATION" | base64 --decode > "$CERT_PATH"
+          KEYCHAIN="$RUNNER_TEMP/ctube-signing.keychain-db"
+          security create-keychain -p ctube "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p ctube "$KEYCHAIN"
+          security import "$CERT_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k ctube "$KEYCHAIN" >/dev/null 2>&1 || true
+          if [ -n "$PROVISIONING_PROFILE" ]; then
+            mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+            echo "$PROVISIONING_PROFILE" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/CTUBE.mobileprovision"
+          fi
+          echo "Apple certificate imported"
+      # CFBundleShortVersionString = versão do package.json e CFBundleVersion
+      # derivado (1.1.0 -> 110) — precisa AUMENTAR a cada upload no TestFlight.
+      - name: Set bundle version from package.json
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          BUILD=$(node -p "require('./package.json').version.replace(/[^0-9]/g, '')")
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" -c "Set :CFBundleVersion $BUILD" ios/App/App/Info.plist
+          echo "Versão do app: $VERSION ($BUILD)"
+      - name: Archive app for App Store
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
+        run: |
+          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          if [ -z "$WORKSPACE" ]; then
+            WORKSPACE=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+            echo "No workspace found, using project: $WORKSPACE"
+          fi
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme App \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/CTUBE-Store.xcarchive \
+            -allowProvisioningUpdates \
+            archive
+      - name: Export App Store IPA
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
+        run: |
+          cat > exportOptions.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store</string>
+  <key>signingStyle</key>
+  <string>automatic</string>
+</dict>
+</plist>
+EOF
+          mkdir -p installers/ios-store
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/CTUBE-Store.xcarchive \
+            -exportPath installers/ios-store \
+            -exportOptionsPlist exportOptions.plist \
+            -allowProvisioningUpdates
+          IPA=$(find installers/ios-store -name "*.ipa" | head -1)
+          if [ -z "$IPA" ]; then
+            echo "::error::Nenhum .ipa foi exportado — confira o certificado/provisioning profile (precisa ser um perfil App Store Distribution)."
+            exit 1
+          fi
+          mv "$IPA" installers/ios-store/CTUBE-Store.ipa
+          echo "IPA pronto: installers/ios-store/CTUBE-Store.ipa"
+      - name: Upload IPA to TestFlight (App Store Connect API)
+        if: env.CERTIFICATE_OSX_APPLICATION != '' && env.APPLE_API_KEY != '' && env.APPLE_API_KEY_ID != '' && env.APPLE_API_ISSUER != ''
+        run: |
+          mkdir -p "$HOME/private_keys" "$HOME/.appstoreconnect/private_keys"
+          echo "$APPLE_API_KEY" | base64 --decode > "$HOME/private_keys/AuthKey_$APPLE_API_KEY_ID.p8"
+          cp "$HOME/private_keys/AuthKey_$APPLE_API_KEY_ID.p8" "$HOME/.appstoreconnect/private_keys/" 2>/dev/null || true
+          xcrun altool --upload-app -f installers/ios-store/CTUBE-Store.ipa \
+            -t ios \
+            --apiKey "$APPLE_API_KEY_ID" \
+            --apiIssuer "$APPLE_API_ISSUER" \
+            --verbose
+      - name: Upload IPA artifact
+        if: env.CERTIFICATE_OSX_APPLICATION != '' && (env.APPLE_API_KEY == '' || env.APPLE_API_KEY_ID == '' || env.APPLE_API_ISSUER == '')
+        uses: actions/upload-artifact@v6
+        with:
+          name: CTUBE-TestFlight-IPA
+          path: installers/ios-store/CTUBE-Store.ipa
+          if-no-files-found: error

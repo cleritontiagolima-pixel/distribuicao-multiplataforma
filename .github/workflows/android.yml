@@ -29,16 +29,39 @@ jobs:
       # Allow playback to continue with the screen locked / app in background
       - name: Patch Android background playback permissions
         run: node scripts/patch-android-background.mjs
+      # Optional release signing: with ANDROID_KEYSTORE_B64 / PASSWORD / ALIAS
+      # configured, the APK is signed with the SAME keystore on every build, so
+      # updates install over previous versions without signature errors and Play
+      # Protect warnings are reduced (release-signed instead of debug-signed).
+      # Without the secrets the build keeps using the Android debug keystore.
+      - name: Patch Android release signing config
+        run: node scripts/patch-android-signing.mjs
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
       - uses: android-actions/setup-android@v3
-      - run: cd android && ./gradlew assembleDebug
+      - name: Build Android APK
+        run: |
+          cd android
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            ./gradlew assembleRelease
+          else
+            ./gradlew assembleDebug
+          fi
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
       - name: Copy APK to installers folder
         run: |
           mkdir -p installers/android
-          APK_PATH=$(find android -name "*.apk" -path "*/debug/*" | head -1)
+          APK_PATH=$(find android -name "*.apk" -path "*/release/*" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find android -name "*.apk" -path "*/debug/*" | head -1)
+          fi
           cp "$APK_PATH" installers/android/CTUBE.apk
           echo "APK saved: $(ls -lh installers/android/CTUBE.apk)"
       - uses: actions/upload-artifact@v6
@@ -47,12 +70,18 @@ jobs:
           path: installers/android/CTUBE.apk
           if-no-files-found: error
       # On tag pushes (v1.x.x), publish the APK to a GitHub Release so the
-      # in-app "nova versão" update alert can point at it.
+      # in-app "nova versão" update alert can point at it. The three workflows
+      # run in parallel on the same tag and race to create the release, so the
+      # publish step is idempotent: "create || true" (ignore if another
+      # workflow already created it) + "upload --clobber" (attach/replace our
+      # asset on that shared release).
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           TAG="${{ github.ref_name }}"
-          gh release create "$TAG" installers/android/CTUBE.apk --title "CTUBE $TAG" --generate-notes --clobber
-          gh release upload "$TAG" installers/android/CTUBE.apk --clobber || true
+          gh release create "$TAG" --title "CTUBE $TAG" --generate-notes || true
+          if ! gh release upload "$TAG" installers/android/CTUBE.apk --clobber; then
+            echo "::warning::gh release upload failed for $TAG"
+          fi
         env:
           GH_TOKEN: ${{ github.token }}

@@ -4,6 +4,7 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const url = require("url");
+const crypto = require("crypto");
 
 // ============================================================
 // CONFIGURATION
@@ -17,6 +18,59 @@ const REMOTE_URL =
   "https://distribuicao-multiplataforma.vercel.app";
 
 const ADMIN_EMAIL = "ctinformatic@gmail.com";
+
+// Optional config baked at build time by the Windows workflow
+// (desktop/baked-config.json, gitignored). Carries CTUBE_PLAN and
+// CTUBE_LICENSE_SECRET so the packaged app enforces paid mode + production
+// codes even fully offline (against its local server). Falls back to the
+// environment, then to the dev defaults.
+let bakedConfig = null;
+try {
+  bakedConfig = require("./baked-config.json");
+} catch {
+  /* no baked config (dev) */
+}
+
+// License codes are HMAC-signed the same way as the web app
+// (lib/server-crypto.ts). The default secret matches the dev default so
+// codes issued in development validate here too. In production set
+// CTUBE_LICENSE_SECRET (baked at build or on the machine) so the desktop app
+// accepts the same codes as the Vercel deployment.
+const LICENSE_SECRET =
+  process.env.CTUBE_LICENSE_SECRET ||
+  (bakedConfig && bakedConfig.licenseSecret) ||
+  "ctube-license-dev-secret";
+
+function validateLicenseCode(code, expectedEmail) {
+  if (!code || typeof code !== "string" || !code.startsWith("CTUBE-")) {
+    return { valid: false, reason: "invalid-format" };
+  }
+  const [, rest] = code.split("-");
+  const [body, sig] = (rest || "").split(".");
+  if (!body || !sig) return { valid: false, reason: "invalid-format" };
+  const expected = crypto.createHmac("sha256", LICENSE_SECRET).update(body).digest("hex").slice(0, 32);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { valid: false, reason: "bad-signature" };
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString());
+    if (expectedEmail && payload.email !== String(expectedEmail).trim().toLowerCase()) {
+      return { valid: false, reason: "email-mismatch" };
+    }
+    if (payload.exp < Date.now()) return { valid: false, reason: "expired", payload };
+    return { valid: true, payload };
+  } catch {
+    return { valid: false, reason: "invalid-format" };
+  }
+}
+
+function getPlan() {
+  if (process.env.CTUBE_PLAN === "paid") return "paid";
+  if (bakedConfig && bakedConfig.plan === "paid") return "paid";
+  return "free";
+}
 
 let mainWindow = null;
 let httpServer = null;
@@ -63,6 +117,10 @@ function getServerAppDir() {
 // MIME types
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
+  // RSC payloads: Next.js App Router client-side navigation fetches these with
+  // the "RSC: 1" header; the router only treats the response as a flight
+  // payload when the content-type starts with text/x-component.
+  ".rsc": "text/x-component; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".mjs": "application/javascript; charset=utf-8",
@@ -161,6 +219,131 @@ async function handleApiRequest(req, res, pathname) {
       const videos = await api.getTrending();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ videos }));
+    } else if (pathname === "/api/app-config") {
+      const pkg = require("../package.json");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          plan: getPlan(),
+          appVersion: pkg.version || "1.0.0",
+          ownerEmail: ADMIN_EMAIL,
+          purchaseUrl:
+            (process.env.CTUBE_PURCHASE_URL || "").trim() ||
+            `mailto:${ADMIN_EMAIL}?subject=CTUBE%20Premium%20(1%20ano)`,
+        })
+      );
+    } else if (pathname === "/api/license/validate" && req.method === "POST") {
+      // Offline license activation: same algorithm as the Vercel route.
+      let raw = "";
+      req.on("data", (chunk) => {
+        raw += chunk;
+        if (raw.length > 10000) req.destroy();
+      });
+      req.on("end", () => {
+        try {
+          const body = JSON.parse(raw || "{}");
+          const code = String(body.code || "").trim();
+          const email = String(body.email || "").trim();
+          const result = validateLicenseCode(code, email || undefined);
+          if (!result.valid || !result.payload) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, valid: false, reason: result.reason || "invalid" }));
+            return;
+          }
+          const daysLeft = Math.max(0, Math.ceil((result.payload.exp - Date.now()) / 86400000));
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ok: true,
+              valid: true,
+              email: result.payload.email,
+              plan: result.payload.plan,
+              days: result.payload.days,
+              daysLeft,
+              expiresAt: result.payload.exp,
+              activatedAt: result.payload.iat,
+            })
+          );
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, valid: false, reason: "bad-request" }));
+        }
+      });
+    } else if (pathname === "/api/download/url") {
+      const videoId = String(params.videoId || "");
+      const code = String(params.code || "");
+      const email = String(params.email || "");
+      if (!/^[A-Za-z0-9_-]{6,}$/.test(videoId)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "invalid-video" }));
+        return;
+      }
+      if (getPlan() === "paid") {
+        const result = validateLicenseCode(code, email || undefined);
+        if (!result.valid || !result.payload) {
+          res.writeHead(403, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "license-required", reason: result.reason || "invalid" }));
+          return;
+        }
+      }
+      try {
+        const stream = await api.resolveAudioStream(videoId);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            videoId,
+            url: stream.url,
+            mimeType: stream.mimeType,
+            size: stream.size,
+            title: stream.title,
+            duration: stream.duration ?? null,
+            plan: getPlan(),
+          })
+        );
+      } catch (err) {
+        console.error("[CTUBE] download/url error:", err.message);
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "resolve-failed", message: err.message }));
+      }
+    } else if (pathname === "/api/download/chunk") {
+      const videoId = String(params.videoId || "");
+      const code = String(params.code || "");
+      const email = String(params.email || "");
+      const start = parseInt(params.start || "0", 10) || 0;
+      const requestedEnd = parseInt(params.end || "0", 10) || start;
+      if (!/^[A-Za-z0-9_-]{6,}$/.test(videoId) || start < 0) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "invalid-video" }));
+        return;
+      }
+      if (getPlan() === "paid") {
+        const result = validateLicenseCode(code, email || undefined);
+        if (!result.valid || !result.payload) {
+          res.writeHead(403, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "license-required", reason: result.reason || "invalid" }));
+          return;
+        }
+      }
+      try {
+        const end = Math.min(requestedEnd, start + 3400000);
+        const { buffer, total } = await api.fetchAudioRange(videoId, start, end);
+        if (buffer.byteLength === 0 || start >= total) {
+          res.writeHead(200, { "x-done": "1", "x-total": String(total), "Content-Length": "0" });
+          res.end();
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(buffer.byteLength),
+          "x-total": String(total),
+        });
+        res.end(Buffer.from(buffer));
+      } catch (err) {
+        console.error("[CTUBE] download/chunk error:", err.message);
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "chunk-failed", message: err.message }));
+      }
     } else {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Not found" }));
@@ -175,17 +358,74 @@ async function handleApiRequest(req, res, pathname) {
 // ============================================================
 // STATIC FILE SERVING
 // ============================================================
-function serveStaticFile(filePath, res) {
+function serveStaticFile(filePath, res, contentTypeOverride) {
   fs.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404);
       res.end("Not found");
       return;
     }
-    const mimeType = getMimeType(filePath);
+    const mimeType = contentTypeOverride || getMimeType(filePath);
     res.writeHead(200, { "Content-Type": mimeType });
     res.end(data);
   });
+}
+
+// ----------------------------------------------------------------------------
+// NEXT.JS APP ROUTER OFFLINE SERVING
+// ----------------------------------------------------------------------------
+// The pre-rendered pages live in .next/server/app/<route>.html plus a matching
+// <route>.rsc file — the flight (RSC) payload that the App Router requests to
+// do client-side navigation. Serving those payloads makes navigation work
+// offline (clicking around stays on one page, no reloads).
+//
+// For routes that have no pre-rendered file (dynamic routes like /watch/<id>),
+// we serve a pre-rendered shell instead. Next.js detects that the response to
+// an RSC request is a full HTML document (not text/x-component) and falls back
+// to a full-page load — so those routes still work, just with a reload.
+
+// App Router navigation requests carry the "RSC: 1" header and/or a
+// ?_rsc= (previously ?__flight__=) query parameter.
+function isRscRequest(req, parsedUrl) {
+  return (
+    req.headers["rsc"] === "1" ||
+    req.headers["__flight__"] === "1" ||
+    parsedUrl.query._rsc !== undefined ||
+    parsedUrl.query.__flight__ !== undefined
+  );
+}
+
+// Resolve a pre-rendered page for a pathname: /trending -> trending.html|.rsc,
+// / -> index.html|.rsc, /some/dir -> some/dir/index.html|.rsc
+function resolvePageFile(serverAppDir, cleanPath, wantRsc) {
+  const ext = wantRsc ? ".rsc" : ".html";
+  const indexName = wantRsc ? "index.rsc" : "index.html";
+  const rel = cleanPath.replace(/^\//, "");
+  const candidates = rel
+    ? [`${rel}${ext}`, path.join(rel, indexName)]
+    : [indexName];
+  for (const candidate of candidates) {
+    const filePath = path.join(serverAppDir, candidate);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      return filePath;
+    }
+  }
+  return null;
+}
+
+// Dynamic routes (/watch/<id>) have no per-id file. A single shell was
+// pre-rendered at build time via generateStaticParams (id "_"); serve that
+// shell for any value. The page itself reads the real id from the URL.
+function resolveParamShell(serverAppDir, cleanPath) {
+  const parts = cleanPath.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  const [segment, value] = parts;
+  if (!value || /\.[a-z0-9]{2,6}$/i.test(value)) return null;
+  const shellPath = path.join(serverAppDir, segment, "_.html");
+  if (fs.existsSync(shellPath) && fs.statSync(shellPath).isFile()) {
+    return shellPath;
+  }
+  return null;
 }
 
 // ============================================================
@@ -231,22 +471,36 @@ function createServer() {
 
       // Try pre-rendered pages from .next/server/app/
       if (serverAppDir && fs.existsSync(serverAppDir)) {
-        const flatFile = path.join(
-          serverAppDir,
-          cleanPath.replace(/^\//, "") + ".html"
-        );
-        if (fs.existsSync(flatFile)) {
-          return serveStaticFile(flatFile, res);
-        }
-        const dirFile = path.join(serverAppDir, cleanPath, "index.html");
-        if (fs.existsSync(dirFile)) {
-          return serveStaticFile(dirFile, res);
-        }
-        if (cleanPath === "/") {
-          const rootHtml = path.join(serverAppDir, "index.html");
-          if (fs.existsSync(rootHtml)) {
-            return serveStaticFile(rootHtml, res);
+        const rscRequest = isRscRequest(req, parsedUrl);
+
+        // 1) RSC navigation requests: serve the pre-rendered flight payload
+        //    (.rsc) so the App Router can navigate without a full page load.
+        //    Dynamic routes have no .rsc file — fall through to HTML below;
+        //    Next.js detects the HTML document and does a full-page load.
+        if (rscRequest) {
+          const rscFile = resolvePageFile(serverAppDir, cleanPath, true);
+          if (rscFile) {
+            return serveStaticFile(
+              rscFile,
+              res,
+              "text/x-component; charset=utf-8"
+            );
           }
+        }
+
+        // 2) Pre-rendered HTML documents (also the MPA fallback for RSC
+        //    requests without a payload file).
+        const htmlFile = resolvePageFile(serverAppDir, cleanPath, false);
+        if (htmlFile) {
+          return serveStaticFile(htmlFile, res);
+        }
+
+        // 3) Dynamic routes: serve the pre-rendered param shell (e.g.
+        //    /watch/_ generated by generateStaticParams) for any value, so
+        //    /watch/<id> renders the watch page even fully offline.
+        const paramShell = resolveParamShell(serverAppDir, cleanPath);
+        if (paramShell) {
+          return serveStaticFile(paramShell, res);
         }
       }
 

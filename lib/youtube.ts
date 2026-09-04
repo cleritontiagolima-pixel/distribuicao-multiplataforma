@@ -18,7 +18,7 @@ export interface VideoItem {
 
 let yt: Innertube | null = null;
 
-async function getYT(): Promise<Innertube> {
+export async function getYT(): Promise<Innertube> {
   if (!yt) {
     yt = await Innertube.create({
       lang: "pt",

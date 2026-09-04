@@ -8,6 +8,14 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
+    env:
+      # Apple signing secrets (optional). When CERTIFICATE_OSX_APPLICATION is
+      # set, the app is signed and packaged as an .ipa installable on real
+      # iPhones. Without them the build stays unsigned (simulator only —
+      # Apple does not allow installing unsigned apps on physical devices).
+      CERTIFICATE_OSX_APPLICATION: ${{ secrets.CERTIFICATE_OSX_APPLICATION }}
+      CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+      PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
@@ -29,33 +37,62 @@ jobs:
       # Allow audio to keep playing with the screen locked (UIBackgroundModes=audio)
       - name: Patch iOS background audio
         run: node scripts/patch-ios-background.mjs
-      - name: Install CocoaPods
+      # If Apple signing secrets are configured, import the certificate and
+      # provisioning profile so the app can be installed on real iPhones.
+      - name: Import Apple signing certificate
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
         run: |
-          if [ -d "ios/App/Podfile" ]; then
-            cd ios/App && pod install
-          elif [ -d "ios/Podfile" ]; then
-            cd ios && pod install
+          CERT_PATH="$RUNNER_TEMP/apple_cert.p12"
+          echo "$CERTIFICATE_OSX_APPLICATION" | base64 --decode > "$CERT_PATH"
+          KEYCHAIN="$RUNNER_TEMP/ctube-signing.keychain-db"
+          security create-keychain -p ctube "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p ctube "$KEYCHAIN"
+          security import "$CERT_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k ctube "$KEYCHAIN" >/dev/null 2>&1 || true
+          if [ -n "$PROVISIONING_PROFILE" ]; then
+            mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+            echo "$PROVISIONING_PROFILE" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/CTUBE.mobileprovision"
           fi
-      # Build for real devices (generic/platform=iOS) — produces an .app
-      # that can be installed on any iPhone/iPad with the right signing.
-      # Also build a simulator version for testing without a device.
+          echo "Apple certificate imported"
+      # Build for real devices (generic/platform=iOS). When signing secrets are
+      # present the app is signed; otherwise it builds unsigned (for simulator).
       - name: Build iOS Device
         run: |
           WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
-          echo "Building workspace: $WORKSPACE for real devices"
-          xcodebuild \
-            -workspace "$WORKSPACE" \
-            -scheme App \
-            -destination "generic/platform=iOS" \
-            -configuration Debug \
-            -derivedDataPath build/device \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_ENTITLEMENTS=""
+          if [ -z "$WORKSPACE" ]; then
+            # Capacitor 8 creates SPM projects that have no .xcworkspace
+            WORKSPACE=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+            echo "No workspace found, using project: $WORKSPACE"
+          fi
+          echo "Building: $WORKSPACE for real devices"
+          if [ -n "$CERTIFICATE_OSX_APPLICATION" ]; then
+            xcodebuild \
+              -workspace "$WORKSPACE" \
+              -scheme App \
+              -destination "generic/platform=iOS" \
+              -configuration Debug \
+              -derivedDataPath build/device \
+              -allowProvisioningUpdates
+          else
+            xcodebuild \
+              -workspace "$WORKSPACE" \
+              -scheme App \
+              -destination "generic/platform=iOS" \
+              -configuration Debug \
+              -derivedDataPath build/device \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              CODE_SIGN_ENTITLEMENTS=""
+          fi
+      # Also build a simulator version for testing without a device.
       - name: Build iOS Simulator
         run: |
           WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          if [ -z "$WORKSPACE" ]; then
+            WORKSPACE=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+          fi
           echo "Building workspace: $WORKSPACE for simulator"
           xcodebuild \
             -workspace "$WORKSPACE" \
@@ -64,9 +101,52 @@ jobs:
             -configuration Debug \
             -derivedDataPath build/simulator \
             CODE_SIGNING_ALLOWED=NO
+      # When the app was signed, package an .ipa that can be installed on real
+      # iPhones (sideload or via a distribution tool).
+      - name: Package signed IPA
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
+        run: |
+          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          if [ -z "$WORKSPACE" ]; then
+            WORKSPACE=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+          fi
+          cat > exportOptions.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>development</string>
+  <key>signingStyle</key>
+  <string>automatic</string>
+</dict>
+</plist>
+EOF
+          mkdir -p installers/ios
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme App \
+            -configuration Debug \
+            -archivePath build/CTUBE.xcarchive \
+            -allowProvisioningUpdates \
+            archive
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/CTUBE.xcarchive \
+            -exportPath installers/ios \
+            -exportOptionsPlist exportOptions.plist \
+            -allowProvisioningUpdates
+          echo "IPA exported:"
+          ls -la installers/ios/
       - name: Copy app bundles to installers folder
         run: |
           mkdir -p installers/ios
+          # Signed .ipa (real devices) — preferred artifact
+          IPA=$(find installers/ios -maxdepth 1 -name "*.ipa" | head -1)
+          if [ -n "$IPA" ]; then
+            mv "$IPA" installers/ios/CTUBE.ipa
+            echo "IPA saved: installers/ios/CTUBE.ipa"
+          fi
           # Device build
           DEVICE_APP=$(find build/device -name "App.app" -type d | head -1)
           if [ -n "$DEVICE_APP" ]; then
@@ -80,7 +160,7 @@ jobs:
             echo "Simulator app saved: installers/ios/CTUBE-Simulator.app"
           fi
           # Fallback: if neither was found, zip the entire build
-          if [ -z "$DEVICE_APP" ] && [ -z "$SIM_APP" ]; then
+          if [ -z "$DEVICE_APP" ] && [ -z "$SIM_APP" ] && [ -z "$IPA" ]; then
             echo "App bundles not found, zipping build output"
             cd build && zip -r ../installers/ios/CTUBE-iOS-build.zip . && cd ..
           fi
@@ -89,16 +169,24 @@ jobs:
           name: CTUBE-iOS
           path: installers/ios/
           if-no-files-found: error
-      # On tag pushes (v1.x.x), publish to GitHub Release.
+      # On tag pushes (v1.x.x), publish to GitHub Release. The three workflows
+      # run in parallel on the same tag, so "create || true" + "upload --clobber"
+      # keeps this idempotent; the .ipa (when signed) or the zip is attached.
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           TAG="${{ github.ref_name }}"
           cd installers/ios
-          # Zip everything for the release
+          # Zip everything for the release (the in-app updater matches .zip/.ipa)
           zip -qr CTUBE-iOS.zip .
           cd ../..
-          gh release create "$TAG" installers/ios/CTUBE-iOS.zip --title "CTUBE $TAG" --generate-notes --clobber
-          gh release upload "$TAG" installers/ios/CTUBE-iOS.zip --clobber || true
+          gh release create "$TAG" --title "CTUBE $TAG" --generate-notes || true
+          ASSET="installers/ios/CTUBE-iOS.zip"
+          if [ -f "installers/ios/CTUBE.ipa" ]; then
+            ASSET="installers/ios/CTUBE.ipa"
+          fi
+          if ! gh release upload "$TAG" "$ASSET" --clobber; then
+            echo "::warning::gh release upload failed for $TAG"
+          fi
         env:
           GH_TOKEN: ${{ github.token }}

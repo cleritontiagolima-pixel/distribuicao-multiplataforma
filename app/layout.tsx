@@ -4,7 +4,7 @@ import ServiceWorkerRegister from "./sw-register";
 import VercelAnalytics from "./VercelAnalytics";
 import TelemetryHost from "@/components/system/TelemetryHost";
 import UpdateNotifier from "@/components/system/UpdateNotifier";
-import PlanGate from "@/components/system/PlanGate";
+import LicenseModal from "@/components/system/LicenseModal";
 
 export const metadata: Metadata = {
   title: "CTUBE — vídeo sem ruído",
@@ -68,7 +68,7 @@ export default function RootLayout({
         {children}
         <VercelAnalytics />
         <UpdateNotifier />
-        <PlanGate />
+        <LicenseModal />
       </body>
     </html>
   );

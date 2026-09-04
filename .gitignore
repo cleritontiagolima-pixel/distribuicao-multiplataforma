@@ -1,3 +1,6 @@
+# Agent/tooling scratch
+.freebuff/
+
 # v0 sandbox internal files
 __v0_runtime_loader.js
 __v0_devtools.tsx
@@ -25,6 +28,9 @@ installers/**/*.exe
 
 # Electron output
 dist/
+
+# Desktop config baked at build time by CI (plan + license secret)
+desktop/baked-config.json
 
 # Capacitor native projects
 android/
