@@ -57,20 +57,12 @@ export async function openExternalUrl(url: string): Promise<void> {
       window.open(url, "_blank");
       return;
     }
-    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
-    if (cap?.isNativePlatform?.()) {
-      try {
-        const { Browser } = await import("@capacitor/browser");
-        await Browser.open({ url });
-        return;
-      } catch {
-        /* fall through */
-      }
-    }
+    // In Capacitor / Android WebView, target=_blank is handled by the system browser.
+    // No native plugin needed — just open a new window and let the OS decide.
+    window.open(url, "_system");
   } catch {
-    /* fall through */
+    window.open(url, "_blank", "noopener,noreferrer");
   }
-  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 export function formatDaysLeft(expiresAtIso?: string | null): number {

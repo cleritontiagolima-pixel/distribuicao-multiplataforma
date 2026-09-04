@@ -36,40 +36,66 @@ jobs:
           elif [ -d "ios/Podfile" ]; then
             cd ios && pod install
           fi
-      - name: Build iOS Simulator
+      # Build for real devices (generic/platform=iOS) — produces an .app
+      # that can be installed on any iPhone/iPad with the right signing.
+      # Also build a simulator version for testing without a device.
+      - name: Build iOS Device
         run: |
           WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
-          echo "Building workspace: $WORKSPACE"
+          echo "Building workspace: $WORKSPACE for real devices"
           xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme App \
-            -sdk iphonesimulator \
+            -destination "generic/platform=iOS" \
             -configuration Debug \
-            -derivedDataPath build \
+            -derivedDataPath build/device \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS=""
+      - name: Build iOS Simulator
+        run: |
+          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          echo "Building workspace: $WORKSPACE for simulator"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme App \
+            -destination "generic/platform=iOS Simulator" \
+            -configuration Debug \
+            -derivedDataPath build/simulator \
             CODE_SIGNING_ALLOWED=NO
-      - name: Copy app to installers folder
+      - name: Copy app bundles to installers folder
         run: |
           mkdir -p installers/ios
-          APP_PATH=$(find build -name "App.app" -type d | head -1)
-          if [ -n "$APP_PATH" ]; then
-            cp -r "$APP_PATH" installers/ios/CTUBE.app
-            echo "App saved to installers/ios/CTUBE.app"
-          else
-            echo "App bundle not found, zipping build output instead"
-            cd build && zip -r ../installers/ios/CTUBE-simulator.zip . && cd ..
+          # Device build
+          DEVICE_APP=$(find build/device -name "App.app" -type d | head -1)
+          if [ -n "$DEVICE_APP" ]; then
+            cp -r "$DEVICE_APP" installers/ios/CTUBE-Device.app
+            echo "Device app saved: installers/ios/CTUBE-Device.app"
+          fi
+          # Simulator build
+          SIM_APP=$(find build/simulator -name "App.app" -type d | head -1)
+          if [ -n "$SIM_APP" ]; then
+            cp -r "$SIM_APP" installers/ios/CTUBE-Simulator.app
+            echo "Simulator app saved: installers/ios/CTUBE-Simulator.app"
+          fi
+          # Fallback: if neither was found, zip the entire build
+          if [ -z "$DEVICE_APP" ] && [ -z "$SIM_APP" ]; then
+            echo "App bundles not found, zipping build output"
+            cd build && zip -r ../installers/ios/CTUBE-iOS-build.zip . && cd ..
           fi
       - uses: actions/upload-artifact@v6
         with:
           name: CTUBE-iOS
           path: installers/ios/
           if-no-files-found: error
-      # On tag pushes (v1.x.x), zip the iOS build and publish it to a GitHub
-      # Release so the in-app "nova versão" update alert can point at it.
+      # On tag pushes (v1.x.x), publish to GitHub Release.
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           TAG="${{ github.ref_name }}"
           cd installers/ios
+          # Zip everything for the release
           zip -qr CTUBE-iOS.zip .
           cd ../..
           gh release create "$TAG" installers/ios/CTUBE-iOS.zip --title "CTUBE $TAG" --generate-notes --clobber

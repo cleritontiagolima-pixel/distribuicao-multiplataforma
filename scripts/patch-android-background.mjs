@@ -12,7 +12,27 @@ if (!existsSync(manifestPath)) {
 
 let manifest = readFileSync(manifestPath, 'utf8')
 
-// Permissões necessárias para manter a reprodução em segundo plano.
+// --- 1. Ensure android:exported="true" on MainActivity (required for Android 12+) ---
+if (manifest.includes('android:name=".MainActivity"')) {
+  // If MainActivity already has android:exported, leave it alone.
+  // If not, add exported="true" to the <activity> tag for .MainActivity.
+  const mainActivityRegex = /(<activity[^>]*android:name="\.MainActivity"[^>]*?)(\/?>)/
+  const match = manifest.match(mainActivityRegex)
+  if (match) {
+    const fullTag = match[0]
+    if (!fullTag.includes('android:exported')) {
+      const fixed = fullTag.replace(/(\/?>)/, ' android:exported="true"$1')
+      manifest = manifest.replace(fullTag, fixed)
+      console.log('[patch-android] Added android:exported="true" to MainActivity')
+    } else {
+      console.log('[patch-android] android:exported already present on MainActivity')
+    }
+  }
+} else {
+  console.warn('[patch-android] MainActivity não encontrada no manifest')
+}
+
+// --- 2. Add background playback permissions ---
 const permissions = [
   'android.permission.WAKE_LOCK',
   'android.permission.FOREGROUND_SERVICE',
@@ -29,12 +49,13 @@ for (const perm of permissions) {
   }
 }
 
-// Impede que o sistema pause o WebView (e o áudio) quando a Activity vai a segundo plano.
-if (!manifest.includes('android:name=".MainActivity"')) {
-  console.warn('[patch-android] MainActivity não encontrada — pulando ajuste de configChanges.')
-} else if (!/android:configChanges="[^"]*keyboardHidden[^"]*orientation/.test(manifest)) {
-  // Capacitor já define configChanges; garantimos que a mudança de tela não recrie a Activity.
+// --- 3. Ensure foreground service type for Android 14+ ---
+if (manifest.includes('FOREGROUND_SERVICE') && !manifest.includes('FOREGROUND_SERVICE_MEDIA_PLAYBACK')) {
+  manifest = manifest.replace(
+    /<manifest([^>]*)>/,
+    `<manifest$1>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />`,
+  )
 }
 
 writeFileSync(manifestPath, manifest)
-console.log('[patch-android] Permissões de segundo plano aplicadas ao AndroidManifest.xml')
+console.log('[patch-android] Permissões de segundo plano e android:exported aplicados ao AndroidManifest.xml')
