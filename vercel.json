@@ -4,5 +4,9 @@
   "buildCommand": "next build",
   "installCommand": "pnpm install --frozen-lockfile",
   "regions": ["iad1"],
-  "crons": []
+  "crons": [],
+  "functions": {
+    "api/download/url": { "maxDuration": 60 },
+    "api/download/chunk": { "maxDuration": 60 }
+  }
 }

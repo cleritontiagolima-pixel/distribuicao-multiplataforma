@@ -433,7 +433,17 @@ async function resolveAudioStream(videoId) {
       lastErr = err;
     }
   }
-  throw lastErr;
+
+  // PO-token fallback (lazy: jsdom + BotGuard are heavy and only needed here).
+  try {
+    const { resolveAudioWithPot } = await import("./pot-engine.mjs");
+    const stream = await withTimeout(resolveAudioWithPot(ytm, videoId), 45000);
+    streamCache.set(videoId, { at: Date.now(), stream });
+    return stream;
+  } catch (err) {
+    console.error("[CTUBE:yt] pot resolution failed:", err && err.message ? err.message : err);
+    throw lastErr;
+  }
 }
 
 async function fetchAudioRange(videoId, start, end) {

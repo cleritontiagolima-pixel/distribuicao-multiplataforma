@@ -89,6 +89,12 @@ function pickAudioFormat(info: any): { url: string; mimeType: string; size: numb
 /**
  * Resolves the best audio-only stream for a video. Results are cached in
  * memory for RESOLVE_TTL so the chunk proxy doesn't re-run getInfo per range.
+ *
+ * Since YouTube now strips stream URLs unless the request is PO-token
+ * protected, the plain getInfo attempts usually find no URL-bearing format;
+ * in that case we fall back to the BotGuard-backed PO-token engine
+ * (desktop/pot-engine.mjs), which mints a per-video "pot" and resolves the
+ * stream through the YTMUSIC client.
  */
 export async function resolveAudioStream(videoId: string): Promise<AudioStream> {
   const cache = getCache();
@@ -127,7 +133,17 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
       lastErr = err;
     }
   }
-  throw lastErr;
+
+  // PO-token fallback (lazy: jsdom + BotGuard are heavy and only needed here).
+  try {
+    const { resolveAudioWithPot } = await import("../desktop/pot-engine.mjs");
+    const stream = await withTimeout(resolveAudioWithPot(yt, videoId), 30000);
+    cache[videoId] = { at: Date.now(), stream };
+    return stream;
+  } catch (err) {
+    console.error(`[ctube] pot resolution failed for ${videoId}:`, err);
+    throw err instanceof Error && err.message ? err : lastErr;
+  }
 }
 
 /** Fetches a byte range of the audio stream (used by the chunk proxy). */
