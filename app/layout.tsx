@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ServiceWorkerRegister from "./sw-register";
 import VercelAnalytics from "./VercelAnalytics";
+import TelemetryHost from "@/components/system/TelemetryHost";
+import UpdateNotifier from "@/components/system/UpdateNotifier";
+import PlanGate from "@/components/system/PlanGate";
 
 export const metadata: Metadata = {
   title: "CTUBE — vídeo sem ruído",
@@ -60,9 +63,12 @@ export default function RootLayout({
         <link rel="preconnect" href="https://i.ytimg.com" />
       </head>
       <body className="min-h-screen antialiased">
+        <TelemetryHost />
         <ServiceWorkerRegister />
         {children}
         <VercelAnalytics />
+        <UpdateNotifier />
+        <PlanGate />
       </body>
     </html>
   );

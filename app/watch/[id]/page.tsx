@@ -68,6 +68,7 @@ function WatchContent() {
   const [showDescription, setShowDescription] = useState(false);
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
+  const [started, setStarted] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const user = getCurrentUser();
@@ -239,16 +240,43 @@ function WatchContent() {
           <div className="flex flex-col xl:flex-row gap-6">
             {/* Main content */}
             <div className="flex-1 min-w-0">
-              {/* Player */}
+              {/* Player — click-to-play poster guarantees autoplay works in
+                  Electron/WebView (user gesture) and avoids silent failures. */}
               <div className="video-player-container mb-4">
-                <iframe
-                  ref={iframeRef}
-                  src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1`}
-                  title={video?.title || "Video Player"}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                  className="w-full h-full"
-                />
+                {!started ? (
+                  <button
+                    onClick={() => setStarted(true)}
+                    className="absolute inset-0 w-full h-full group"
+                    aria-label="Reproduzir vídeo"
+                  >
+                    <Image
+                      src={`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`}
+                      alt=""
+                      fill
+                      priority
+                      unoptimized
+                      className="object-cover opacity-60 group-hover:opacity-40 transition-opacity"
+                      sizes="(max-width: 1280px) 100vw, 1200px"
+                    />
+                    <span className="absolute inset-0 flex items-center justify-center">
+                      <span className="w-20 h-20 rounded-full bg-black/60 group-hover:bg-[var(--primary)] flex items-center justify-center transition-colors">
+                        <Play className="w-9 h-9 text-white ml-1" />
+                      </span>
+                    </span>
+                    <span className="absolute bottom-3 left-3 px-3 py-1.5 rounded-lg bg-black/70 text-white text-xs font-medium">
+                      Clique para reproduzir
+                    </span>
+                  </button>
+                ) : (
+                  <iframe
+                    ref={iframeRef}
+                    src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&playsinline=1`}
+                    title={video?.title || "Video Player"}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    className="w-full h-full"
+                  />
+                )}
               </div>
 
               {loading ? (

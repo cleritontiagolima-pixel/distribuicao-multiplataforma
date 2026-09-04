@@ -1,5 +1,8 @@
-// CTUBE Service Worker - Basic offline caching
-const CACHE_NAME = "ctube-v2";
+// CTUBE Service Worker
+// - Static assets: cache-first (fast repeat loads).
+// - Page navigations: network-first (always fresh, like the Vercel app),
+//   falling back to the last good cached page when offline.
+const CACHE_NAME = "ctube-v3";
 const STATIC_ASSETS = ["/", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -27,7 +30,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(event.request.url);
 
-  // Don't cache API requests, YouTube, or non-same-origin
+  // Never intercept API calls, YouTube resources, or cross-origin requests
   if (
     url.pathname.startsWith("/api/") ||
     url.hostname.includes("youtube.com") ||
@@ -38,6 +41,30 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Page navigation: try the network first so users always get the latest
+  // version (same as Vercel). Only if offline do we serve the cached page.
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) =>
+              cache.put(event.request, clone)
+            );
+          }
+          return response;
+        })
+        .catch(() =>
+          caches.match(event.request).then(
+            (cached) => cached || caches.match("/")
+          )
+        )
+    );
+    return;
+  }
+
+  // Static assets and other same-origin GETs: cache-first
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
@@ -46,7 +73,8 @@ self.addEventListener("fetch", (event) => {
         if (response.status === 200) {
           const contentType = response.headers.get("content-type") || "";
           // Don't cache HTML responses for script/style requests
-          const isScriptRequest = url.pathname.endsWith(".js") || url.pathname.endsWith(".mjs");
+          const isScriptRequest =
+            url.pathname.endsWith(".js") || url.pathname.endsWith(".mjs");
           const isStyleRequest = url.pathname.endsWith(".css");
           const isHtmlResponse = contentType.includes("text/html");
 
@@ -70,7 +98,9 @@ self.addEventListener("fetch", (event) => {
             url.pathname.endsWith(".woff2")
           ) {
             const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            caches.open(CACHE_NAME).then((cache) =>
+              cache.put(event.request, clone)
+            );
           }
         }
         return response;

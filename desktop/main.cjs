@@ -250,14 +250,30 @@ function createServer() {
         }
       }
 
-      // SPA fallback: only for page routes (no file extension)
+      // SPA fallback: for all page routes (no file extension), serve the shell
       const hasExtension = /\.[a-z0-9]{2,6}$/i.test(cleanPath);
       if (!hasExtension) {
-        // Try to serve the index.html for SPA routing
+        // Serve the root index.html as the SPA shell for client-side routing
         const rootIndex = path.join(serverAppDir, "index.html");
         if (fs.existsSync(rootIndex)) {
           return serveStaticFile(rootIndex, res);
         }
+        // Fallback to out/index.html for Capacitor builds
+        const outIndex = path.join(getProjectRoot(), "out", "index.html");
+        if (fs.existsSync(outIndex)) {
+          return serveStaticFile(outIndex, res);
+        }
+        // Last resort: public index.html
+        const publicIndex = path.join(publicDir, "index.html");
+        if (fs.existsSync(publicIndex)) {
+          return serveStaticFile(publicIndex, res);
+        }
+      }
+
+      // Try the out/ directory for Capacitor builds
+      const outPath = path.join(getProjectRoot(), "out", cleanPath);
+      if (fs.existsSync(outPath) && fs.statSync(outPath).isFile()) {
+        return serveStaticFile(outPath, res);
       }
 
       res.writeHead(404);
@@ -453,6 +469,28 @@ function createWindow(targetUrl) {
   // Start with no menu (admin can show it via IPC)
   Menu.setApplicationMenu(null);
 
+  // Inject CSP that allows YouTube embeds, ytimg thumbnails, and cross-origin resources
+  // Register once per session, not per page load
+  mainWindow.webContents.session.webRequest.onHeadersReceived(
+    (details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          "Content-Security-Policy": [
+            "default-src 'self' https:; " +
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; " +
+            "style-src 'self' 'unsafe-inline' https:; " +
+            "img-src 'self' data: https: http:; " +
+            "media-src 'self' https: blob:; " +
+            "frame-src https://www.youtube.com https://www.youtube-nocookie.com; " +
+            "connect-src 'self' https: wss:; " +
+            "font-src 'self' https:;"
+          ],
+        },
+      });
+    }
+  );
+
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();
   });
@@ -479,6 +517,19 @@ function createWindow(targetUrl) {
 
   mainWindow.webContents.on("did-finish-load", () => {
     retryCount = 0;
+  });
+
+  // Handle navigation to ensure proper routing
+  mainWindow.webContents.on("will-navigate", (event, navUrl) => {
+    const parsedNav = url.parse(navUrl);
+    // Allow navigation within the same origin
+    const currentUrl = url.parse(mainWindow.webContents.getURL());
+    if (parsedNav.hostname === currentUrl.hostname || parsedNav.hostname === "localhost") {
+      return; // Allow internal navigation
+    }
+    // External links open in default browser
+    event.preventDefault();
+    shell.openExternal(navUrl);
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {

@@ -34,6 +34,7 @@ function LoginForm() {
     // Simulate network delay
     await new Promise((r) => setTimeout(r, 300));
 
+    let loggedEmail = "";
     if (isLogin) {
       const user = login(email, password);
       if (!user) {
@@ -41,6 +42,7 @@ function LoginForm() {
         setLoading(false);
         return;
       }
+      loggedEmail = user.email;
     } else {
       if (!name.trim()) {
         setError("Nome é obrigatório");
@@ -53,10 +55,16 @@ function LoginForm() {
         setLoading(false);
         return;
       }
+      loggedEmail = user.email;
     }
 
     setLoading(false);
-    router.push(returnTo);
+    // Owner account goes straight to the developer panel.
+    if (loggedEmail === "ctinformatic@gmail.com" && (!returnTo || returnTo === "/")) {
+      router.push("/admin");
+    } else {
+      router.push(returnTo);
+    }
   };
 
   return (

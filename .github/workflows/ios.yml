@@ -6,6 +6,8 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
@@ -24,6 +26,9 @@ jobs:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
       - run: npx cap add ios || true
       - run: npx cap sync ios
+      # Allow audio to keep playing with the screen locked (UIBackgroundModes=audio)
+      - name: Patch iOS background audio
+        run: node scripts/patch-ios-background.mjs
       - name: Install CocoaPods
         run: |
           if [ -d "ios/App/Podfile" ]; then
@@ -58,3 +63,15 @@ jobs:
           name: CTUBE-iOS
           path: installers/ios/
           if-no-files-found: error
+      # On tag pushes (v1.x.x), zip the iOS build and publish it to a GitHub
+      # Release so the in-app "nova versão" update alert can point at it.
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          cd installers/ios
+          zip -qr CTUBE-iOS.zip .
+          cd ../..
+          gh release create "$GITHUB_REF_NAME" installers/ios/CTUBE-iOS.zip --title "CTUBE $GITHUB_REF_NAME" --generate-notes --clobber 2>/dev/null || true
+          gh release upload "$GITHUB_REF_NAME" installers/ios/CTUBE-iOS.zip --clobber 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -53,6 +53,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [miniSidebar, setMiniSidebar] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [user, setUser] = useState<UserType | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -73,6 +74,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       }
     }
   }, [user]);
+
+  // Detect mobile viewport on mount
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -179,6 +188,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                       <PlaySquare className="w-4 h-4" />
                       Suas playlists
                     </Link>
+                    {user.email === "ctinformatic@gmail.com" && (
+                      <Link
+                        href="/admin"
+                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--secondary)] transition-colors"
+                      >
+                        <Settings className="w-4 h-4" />
+                        Painel do desenvolvedor
+                      </Link>
+                    )}
                     <Link
                       href="/settings"
                       className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--secondary)] transition-colors"
@@ -321,7 +339,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {/* Main Content */}
           <main
             suppressHydrationWarning
-            className={`main-content ${miniSidebar ? "main-content-mini" : "main-content-full"}`}
+            className="flex-1 overflow-y-auto overflow-x-hidden transition-all duration-200"
+            style={{
+              height: "calc(100vh - 3.5rem)",
+              marginLeft: isMobile ? 0 : miniSidebar ? 72 : 240,
+            }}
           >
             {children}
           </main>
