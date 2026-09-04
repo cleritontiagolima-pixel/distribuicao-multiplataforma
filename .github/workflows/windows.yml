@@ -81,9 +81,13 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
-          gh release create $env:GITHUB_REF_NAME installers/windows/CTUBE-Setup.exe --title "CTUBE $env:GITHUB_REF_NAME" --generate-notes --clobber 2>$null
+          $tag = $env:GITHUB_REF_NAME
+          Write-Host "Publishing $tag"
+          gh release create $tag installers/windows/CTUBE-Setup.exe --title "CTUBE $tag" --generate-notes --clobber
           if ($LASTEXITCODE -ne 0) {
-            gh release upload $env:GITHUB_REF_NAME installers/windows/CTUBE-Setup.exe --clobber 2>$null
+            Write-Host "Release exists, uploading asset..."
+            gh release upload $tag installers/windows/CTUBE-Setup.exe --clobber
           }
+          if ($LASTEXITCODE -ne 0) { Write-Host "::warning::gh release upload failed"; exit 0 }
         env:
           GH_TOKEN: ${{ github.token }}
