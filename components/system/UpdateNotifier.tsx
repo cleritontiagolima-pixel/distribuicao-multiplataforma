@@ -37,15 +37,15 @@ function readDismissed(): string | null {
 export default function UpdateNotifier() {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [visible, setVisible] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const inFlight = useRef(false);
   const mountedRef = useRef(true);
 
   const check = useCallback(async () => {
+    if (inFlight.current) return;
     const platform = getPlatform();
     // Web/Vercel is always the latest content — nothing to install.
     if (platform === "web" || typeof window === "undefined") return;
-    if (checking) return;
-    setChecking(true);
+    inFlight.current = true;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 8000);
@@ -54,20 +54,22 @@ export default function UpdateNotifier() {
       if (!res.ok) return;
       const data = (await res.json()) as UpdateInfo;
       if (!mountedRef.current) return;
-      setInfo(data);
       const tag = data?.tag || "";
       const shouldShow =
         data?.ok &&
         !!tag &&
         isNewerVersion(APP_VERSION, tag) &&
         readDismissed() !== tag;
-      setVisible(!!shouldShow);
+      if (shouldShow) {
+        setInfo(data);
+        setVisible(true);
+      }
     } catch {
       /* offline — ignore */
     } finally {
-      if (mountedRef.current) setChecking(false);
+      inFlight.current = false;
     }
-  }, [checking]);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -75,10 +77,12 @@ export default function UpdateNotifier() {
     const interval = setInterval(() => void check(), 60 * 60 * 1000);
     const onFocus = () => void check();
     window.addEventListener("focus", onFocus);
+    window.addEventListener("online", onFocus);
     return () => {
       mountedRef.current = false;
       clearInterval(interval);
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("online", onFocus);
     };
   }, [check]);
 
