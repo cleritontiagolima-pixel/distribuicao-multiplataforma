@@ -68,10 +68,11 @@ jobs:
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
+          TAG="${{ github.ref_name }}"
           cd installers/ios
           zip -qr CTUBE-iOS.zip .
           cd ../..
-          gh release create "$GITHUB_REF_NAME" installers/ios/CTUBE-iOS.zip --title "CTUBE $GITHUB_REF_NAME" --generate-notes --clobber 2>/dev/null || true
-          gh release upload "$GITHUB_REF_NAME" installers/ios/CTUBE-iOS.zip --clobber 2>/dev/null || true
+          gh release create "$TAG" installers/ios/CTUBE-iOS.zip --title "CTUBE $TAG" --generate-notes --clobber
+          gh release upload "$TAG" installers/ios/CTUBE-iOS.zip --clobber || true
         env:
           GH_TOKEN: ${{ github.token }}

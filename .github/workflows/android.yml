@@ -51,7 +51,8 @@ jobs:
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          gh release create "$GITHUB_REF_NAME" installers/android/CTUBE.apk --title "CTUBE $GITHUB_REF_NAME" --generate-notes --clobber 2>/dev/null || true
-          gh release upload "$GITHUB_REF_NAME" installers/android/CTUBE.apk --clobber 2>/dev/null || true
+          TAG="${{ github.ref_name }}"
+          gh release create "$TAG" installers/android/CTUBE.apk --title "CTUBE $TAG" --generate-notes --clobber
+          gh release upload "$TAG" installers/android/CTUBE.apk --clobber || true
         env:
           GH_TOKEN: ${{ github.token }}
