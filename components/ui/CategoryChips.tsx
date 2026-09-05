@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -35,7 +35,6 @@ export default function CategoryChips({
   selected = "Todos",
   onSelect,
 }: CategoryChipsProps) {
-  const [scrollLeft, setScrollLeft] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const handleScroll = (direction: "left" | "right") => {

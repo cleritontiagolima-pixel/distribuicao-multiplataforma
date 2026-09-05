@@ -1,0 +1,30 @@
+name: CI — Lint & Typecheck
+
+# Runs on every push and pull request so broken code never waits for
+# Vercel (or an installer tag) to be the first check.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  lint-and-typecheck:
+    name: lint + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      # pnpm version comes from "packageManager" in package.json
+      # (single source of truth — matches Vercel + all other workflows).
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build

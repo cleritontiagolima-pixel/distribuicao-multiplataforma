@@ -17,12 +17,9 @@ import {
   PlaySquare,
   Plus,
   Trash2,
-  MoreVertical,
-  Play,
   X,
   ListVideo,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 export default function PlaylistsPage() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -175,7 +172,7 @@ export default function PlaylistsPage() {
                   <div className="border-t border-[var(--border)]">
                     {playlist.videos.length === 0 ? (
                       <div className="p-6 text-center text-sm text-[var(--muted-foreground)]">
-                        Playlist vazia. Adicione vídeos usando o menu "..." nos vídeos.
+                        Playlist vazia. Adicione vídeos usando o menu &quot;...&quot; nos vídeos.
                       </div>
                     ) : (
                       playlist.videos.map((video, idx) => (

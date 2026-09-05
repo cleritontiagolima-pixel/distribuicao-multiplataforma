@@ -44,17 +44,6 @@ function SearchContent() {
     []
   );
 
-  useEffect(() => {
-    if (query) {
-      setVideos([]);
-      setContinuation(undefined);
-      setHasMore(true);
-      setError(null);
-      setLoading(true);
-      loadVideos(query);
-    }
-  }, [query]);
-
   const loadVideos = useCallback(
     async (q: string, cont?: string) => {
       try {
@@ -99,6 +88,18 @@ function SearchContent() {
     setLoadingMore(true);
     loadVideos(query, continuation);
   }, [loadingMore, hasMore, continuation, query, loadVideos]);
+
+  // Load new search results when the query changes
+  useEffect(() => {
+    if (query) {
+      setVideos([]);
+      setContinuation(undefined);
+      setHasMore(true);
+      setError(null);
+      setLoading(true);
+      loadVideos(query);
+    }
+  }, [query, loadVideos]);
 
   // Infinite scroll
   useEffect(() => {

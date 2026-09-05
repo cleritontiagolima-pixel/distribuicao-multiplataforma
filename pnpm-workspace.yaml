@@ -6,3 +6,4 @@ allowBuilds:
   electron: true
   esbuild: true
   electron-winstaller: true
+  unrs-resolver: true

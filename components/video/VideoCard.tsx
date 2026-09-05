@@ -7,15 +7,12 @@ import {
   MoreVertical,
   Clock,
   ListPlus,
-  ThumbsUp,
   Share2,
   Play,
-  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   addToWatchLater,
-  addToHistory,
   addToPlaylist,
   getPlaylists,
   type PlaylistVideo,

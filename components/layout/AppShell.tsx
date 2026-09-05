@@ -68,11 +68,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   // Electron: show menu bar only for admin user
   useEffect(() => {
-    if (typeof window !== "undefined" && (window as any).electronAPI) {
+    const electronAPI = (window as Window & { electronAPI?: { showMenuBar?: () => void; hideMenuBar?: () => void } }).electronAPI;
+    if (typeof window !== "undefined" && electronAPI) {
       if (user && user.email === "ctinformatic@gmail.com") {
-        (window as any).electronAPI.showMenuBar();
+        electronAPI.showMenuBar?.();
       } else {
-        (window as any).electronAPI.hideMenuBar();
+        electronAPI.hideMenuBar?.();
       }
     }
   }, [user]);

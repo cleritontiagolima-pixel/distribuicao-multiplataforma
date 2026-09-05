@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import { getCurrentUser, clearHistory, logout } from "@/lib/storage";
 import { Settings, Trash2, LogOut, Info, ShieldCheck, KeyRound } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { APP_VERSION, OWNER_EMAIL } from "@/lib/constants";
 import { getStoredLicense, licenseDaysLeft } from "@/lib/owner";
 import Link from "next/link";
