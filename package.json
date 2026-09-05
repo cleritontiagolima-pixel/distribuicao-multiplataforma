@@ -1,6 +1,7 @@
 {
   "name": "ctube",
   "version": "1.1.0",
+  "packageManager": "pnpm@11.25.0",
   "description": "CTUBE - Player de vídeo multiplataforma",
   "author": "CTUBE",
   "private": true,
