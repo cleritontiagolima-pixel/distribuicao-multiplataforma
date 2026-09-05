@@ -4,7 +4,7 @@ import { validateLicenseCode } from "@/lib/server-crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // Returns the audio-only stream URL + metadata for a video.
 // Entitlement: when CTUBE_PLAN=paid a valid license code is required

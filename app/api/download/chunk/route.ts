@@ -4,7 +4,7 @@ import { validateLicenseCode } from "@/lib/server-crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // Chunk proxy for offline downloads. The client downloads the audio in
 // byte ranges (capped below the Vercel 4.5MB response limit) and assembles
