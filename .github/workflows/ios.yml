@@ -58,16 +58,18 @@ jobs:
       # present the app is signed; otherwise it builds unsigned (for simulator).
       - name: Build iOS Device
         run: |
-          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
-          if [ -z "$WORKSPACE" ]; then
+          BUILD_TARGET=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          FLAG="-workspace"
+          if [ -z "$BUILD_TARGET" ]; then
             # Capacitor 8 creates SPM projects that have no .xcworkspace
-            WORKSPACE=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
-            echo "No workspace found, using project: $WORKSPACE"
+            BUILD_TARGET=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+            FLAG="-project"
+            echo "No workspace found, using project: $BUILD_TARGET"
           fi
-          echo "Building: $WORKSPACE for real devices"
+          echo "Building: $BUILD_TARGET for real devices"
           if [ -n "$CERTIFICATE_OSX_APPLICATION" ]; then
             xcodebuild \
-              -workspace "$WORKSPACE" \
+              $FLAG "$BUILD_TARGET" \
               -scheme App \
               -destination "generic/platform=iOS" \
               -configuration Debug \
@@ -75,7 +77,7 @@ jobs:
               -allowProvisioningUpdates
           else
             xcodebuild \
-              -workspace "$WORKSPACE" \
+              $FLAG "$BUILD_TARGET" \
               -scheme App \
               -destination "generic/platform=iOS" \
               -configuration Debug \
@@ -88,13 +90,15 @@ jobs:
       # Also build a simulator version for testing without a device.
       - name: Build iOS Simulator
         run: |
-          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
-          if [ -z "$WORKSPACE" ]; then
-            WORKSPACE=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+          BUILD_TARGET=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          FLAG="-workspace"
+          if [ -z "$BUILD_TARGET" ]; then
+            BUILD_TARGET=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+            FLAG="-project"
           fi
-          echo "Building workspace: $WORKSPACE for simulator"
+          echo "Building: $BUILD_TARGET for simulator"
           xcodebuild \
-            -workspace "$WORKSPACE" \
+            $FLAG "$BUILD_TARGET" \
             -scheme App \
             -destination "generic/platform=iOS Simulator" \
             -configuration Debug \
@@ -105,25 +109,27 @@ jobs:
       - name: Package signed IPA
         if: env.CERTIFICATE_OSX_APPLICATION != ''
         run: |
-          WORKSPACE=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
-          if [ -z "$WORKSPACE" ]; then
-            WORKSPACE=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+          BUILD_TARGET=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          FLAG="-workspace"
+          if [ -z "$BUILD_TARGET" ]; then
+            BUILD_TARGET=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+            FLAG="-project"
           fi
           cat > exportOptions.plist <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>development</string>
-  <key>signingStyle</key>
-  <string>automatic</string>
-</dict>
-</plist>
-EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+          </dict>
+          </plist>
+          EOF
           mkdir -p installers/ios
           xcodebuild \
-            -workspace "$WORKSPACE" \
+            $FLAG "$BUILD_TARGET" \
             -scheme App \
             -configuration Debug \
             -archivePath build/CTUBE.xcarchive \

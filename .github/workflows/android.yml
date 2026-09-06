@@ -47,10 +47,11 @@ jobs:
       - name: Build Android APK
         run: |
           cd android
+          GRADLE_FLAGS="--stacktrace --no-daemon --console=plain"
           if [ -n "$ANDROID_KEYSTORE_B64" ]; then
-            ./gradlew assembleRelease
+            ./gradlew assembleRelease $GRADLE_FLAGS
           else
-            ./gradlew assembleDebug
+            ./gradlew assembleDebug $GRADLE_FLAGS
           fi
         env:
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}

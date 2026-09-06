@@ -48,7 +48,10 @@ if (versionCode) {
   console.log(`[patch-android-signing] versionCode -> ${versionCode}`)
 }
 if (version) {
-  buildGradle = buildGradle.replace(/(versionName\s+"?)[^"\n]+/, `$1${version}"`)
+  // Troca o valor inteiro (quoted ou bare) do versionName, preservando as aspas
+  // do template. O regex antigo consumia só até a aspa de fechamento e anexava
+  // outra, gerando `versionName "1.1.1""` — Groovy inválido que quebrava o Gradle.
+  buildGradle = buildGradle.replace(/(versionName\s*)(?:"[^"]*"|\S+)/, `$1"${version}"`)
   console.log(`[patch-android-signing] versionName -> ${version}`)
 }
 
