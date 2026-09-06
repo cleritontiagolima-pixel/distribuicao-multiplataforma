@@ -129,13 +129,16 @@ jobs:
           }
         env:
           GH_TOKEN: ${{ github.token }}
-      # Final gate: after publishing, verify the tag's release has ALL platform
-      # installers. The three workflows run in parallel on the same tag, so this
-      # waits (polling) for the Android .apk and iOS .zip/.ipa to be uploaded by
-      # their workflows. Fails loudly if any is missing (e.g. another build
-      # failed) instead of shipping a broken release.
-      - name: Verify release assets
+      # Informational gate: after publishing, check the tag's release has ALL
+      # platform installers. The three workflows run in parallel on the same tag,
+      # so this polls for the Android .apk and iOS .zip/.ipa to be uploaded by
+      # their workflows. This copy is advisory (continue-on-error) because it
+      # races with the parallel uploads and can spuriously fail even when the
+      # assets are all present; the authoritative gate is the dedicated
+      # "CTUBE Release Check" workflow, which re-verifies with a 30 min wait.
+      - name: Verify release assets (advisory)
         if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
         shell: pwsh
         run: |
           node scripts/check-release-assets.mjs --tag "${{ github.ref_name }}" --wait 30
