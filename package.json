@@ -1,6 +1,6 @@
 {
   "name": "ctube",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "packageManager": "pnpm@11.25.0",
   "description": "CTUBE - Player de vídeo multiplataforma",
   "author": "CTUBE",
@@ -49,6 +49,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "start": "next start",
+    "postinstall": "node scripts/patch-android-background.mjs && node scripts/patch-ios-background.mjs || true",
     "desktop": "electron desktop/main.cjs",
     "desktop:build": "pnpm build && electron-builder",
     "mobile:shell": "node scripts/prepare-mobile-shell.mjs",
@@ -59,7 +60,8 @@
     "build:desktop": "pnpm build && npx electron-builder --publish never",
     "build:desktop:win": "pnpm build && npx electron-builder --win --publish never",
     "build:desktop:mac": "pnpm build && npx electron-builder --mac --publish never",
-    "build:desktop:linux": "pnpm build && npx electron-builder --linux --publish never"
+    "build:desktop:linux": "pnpm build && npx electron-builder --linux --publish never",
+    "check:types": "tsc --noEmit"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

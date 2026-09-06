@@ -1,0 +1,210 @@
+name: CTUBE iOS
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  build:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      # Apple signing secrets (optional). When CERTIFICATE_OSX_APPLICATION is
+      # set, the app is signed and packaged as an .ipa installable on real
+      # iPhones. Without them the build stays unsigned (simulator only —
+      # Apple does not allow installing unsigned apps on physical devices).
+      CERTIFICATE_OSX_APPLICATION: ${{ secrets.CERTIFICATE_OSX_APPLICATION }}
+      CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+      PROVISIONING_PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        # Version read from "packageManager" in package.json (single source of truth)
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Build the web app (creates .next/standalone/)
+      - run: pnpm build
+      - name: Prepare Capacitor shell
+        run: node scripts/prepare-mobile-shell.mjs
+        env:
+          CTUBE_URL: ${{ secrets.CTUBE_URL }}
+      - run: npx cap add ios || true
+      - run: npx cap sync ios
+      # Allow audio to keep playing with the screen locked (UIBackgroundModes=audio)
+      - name: Patch iOS background audio
+        run: node scripts/patch-ios-background.mjs
+      # If Apple signing secrets are configured, import the certificate and
+      # provisioning profile so the app can be installed on real iPhones.
+      - name: Import Apple signing certificate
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
+        run: |
+          CERT_PATH="$RUNNER_TEMP/apple_cert.p12"
+          echo "$CERTIFICATE_OSX_APPLICATION" | base64 --decode > "$CERT_PATH"
+          KEYCHAIN="$RUNNER_TEMP/ctube-signing.keychain-db"
+          security create-keychain -p ctube "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p ctube "$KEYCHAIN"
+          security import "$CERT_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k ctube "$KEYCHAIN" >/dev/null 2>&1 || true
+          if [ -n "$PROVISIONING_PROFILE" ]; then
+            mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+            echo "$PROVISIONING_PROFILE" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/CTUBE.mobileprovision"
+          fi
+          echo "Apple certificate imported"
+      # Build for real devices (generic/platform=iOS). The previous version of
+      # this step ran an UNSIGNED build with CODE_SIGNING_ALLOWED=NO whenever
+      # the Apple signing secrets were missing — that produced an "App.app"
+      # bundle that, when copied to a real iPhone, shows the launcher
+      # for a fraction of a second and is killed (the classic "abre e fecha"
+      # symptom). We now build the device target ONLY when a signing
+      # certificate is present, so the artifact handed to the consumer is
+      # always installable. Without secrets we still build a simulator app
+      # (so QA can still use it on a Mac) but skip the broken device path.
+      - name: Build iOS Device (signed only)
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
+        run: |
+          BUILD_TARGET=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          FLAG="-workspace"
+          if [ -z "$BUILD_TARGET" ]; then
+            BUILD_TARGET=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+            FLAG="-project"
+            echo "No workspace found, using project: $BUILD_TARGET"
+          fi
+          echo "Building: $BUILD_TARGET for real devices (SOMENTE COM CERTIFICADO)"
+          xcodebuild \
+            $FLAG "$BUILD_TARGET" \
+            -scheme App \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            -derivedDataPath build/device \
+            -allowProvisioningUpdates
+      - name: Skip device build (no signing secrets)
+        if: env.CERTIFICATE_OSX_APPLICATION == ''
+        run: |
+          echo "::warning::Sem secrets da Apple (CERTIFICATE_OSX_APPLICATION / PROVISIONING_PROFILE)."
+          echo "::warning::Pulando build de device. O artefato entregue AGORA será"
+          echo "::warning::APENAS o App.app do SIMULADOR — NÃO instale num iPhone real"
+          echo "::warning::(seria o motivo do seu app 'abrir e fechar'). Para gerar"
+          echo "::warning::um IPA instalável em device real, cadastre os secrets da"
+          echo "::warning::sua conta Apple Developer Program (\$99/ano) em Settings →"
+          echo "::warning::Secrets and variables → Actions."
+      # Build a simulator version for QA on Mac. Independent of the device build
+      # so QA always has something to smoke-test, even when no Apple secrets exist.
+      - name: Build iOS Simulator
+        run: |
+          BUILD_TARGET=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          FLAG="-workspace"
+          if [ -z "$BUILD_TARGET" ]; then
+            BUILD_TARGET=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+            FLAG="-project"
+          fi
+          echo "Building: $BUILD_TARGET for simulator"
+          xcodebuild \
+            $FLAG "$BUILD_TARGET" \
+            -scheme App \
+            -destination "generic/platform=iOS Simulator" \
+            -configuration Debug \
+            -derivedDataPath build/simulator \
+            CODE_SIGNING_ALLOWED=NO
+      # When the app was signed, package an .ipa that can be installed on real
+      # iPhones (sideload or via a distribution tool).
+      - name: Package signed IPA
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
+        run: |
+          BUILD_TARGET=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
+          FLAG="-workspace"
+          if [ -z "$BUILD_TARGET" ]; then
+            BUILD_TARGET=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
+            FLAG="-project"
+          fi
+          cat > exportOptions.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+          </dict>
+          </plist>
+          EOF
+          mkdir -p installers/ios
+          xcodebuild \
+            $FLAG "$BUILD_TARGET" \
+            -scheme App \
+            -configuration Debug \
+            -archivePath build/CTUBE.xcarchive \
+            -allowProvisioningUpdates \
+            archive
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/CTUBE.xcarchive \
+            -exportPath installers/ios \
+            -exportOptionsPlist exportOptions.plist \
+            -allowProvisioningUpdates
+          echo "IPA exported:"
+          ls -la installers/ios/
+      - name: Copy app bundles to installers folder
+        run: |
+          mkdir -p installers/ios
+          # 1) IPA assinado (preferido — instalável em iPhone real)
+          IPA=$(find installers/ios -maxdepth 1 -name "*.ipa" | head -1)
+          if [ -n "$IPA" ]; then
+            mv "$IPA" installers/ios/CTUBE.ipa
+            echo "IPA salvo: installers/ios/CTUBE.ipa"
+          fi
+          # 2) Device app (somente quando assinado)
+          DEVICE_APP=$(find build/device -name "App.app" -type d | head -1)
+          if [ -n "$DEVICE_APP" ]; then
+            cp -r "$DEVICE_APP" installers/ios/CTUBE-Device.app
+            echo "Device app salvo: installers/ios/CTUBE-Device.app"
+          fi
+          # 3) Simulator (instalável APENAS em simulador do Mac — não em iPhone real)
+          SIM_APP=$(find build/simulator -name "App.app" -type d | head -1)
+          if [ -n "$SIM_APP" ]; then
+            cp -r "$SIM_APP" installers/ios/CTUBE-Simulator.app
+            echo "Simulator app salvo: installers/ios/CTUBE-Simulator.app"
+          fi
+          # 4) Quando NÃO há secrets da Apple, zipamos SÓ o simulador e marcamos
+          #    no nome do arquivo que ele NÃO serve para iPhone real. Evita o
+          #    cenário do consumidor baixar um "CTUBE-iOS.zip" cheio de .app
+          #    de simulador achando que é instalável.
+          if [ -z "$DEVICE_APP" ] && [ -z "$IPA" ] && [ -n "$SIM_APP" ]; then
+            cd installers/ios && rm -rf CTUBE-Simulator.app && zip -r CTUBE-iOS-Simulator-Only.zip CTUBE-Simulator.app && cd ../..
+            echo "::warning::Sem signing. Zip gerado contém apenas o simulador."
+          fi
+          # 5) Fallback absoluto
+          if [ -z "$DEVICE_APP" ] && [ -z "$SIM_APP" ] && [ -z "$IPA" ]; then
+            echo "Nenhum bundle encontrado — zipando build/."
+            cd build && zip -r ../installers/ios/CTUBE-iOS-build.zip . && cd ..
+          fi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: CTUBE-iOS
+          path: installers/ios/
+          if-no-files-found: error
+      # On tag pushes (v1.x.x), publish to GitHub Release. The three workflows
+      # run in parallel on the same tag, so "create || true" + "upload --clobber"
+      # keeps this idempotent; the .ipa (when signed) or the zip is attached.
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${{ github.ref_name }}"
+          cd installers/ios
+          # Zip everything for the release (the in-app updater matches .zip/.ipa)
+          zip -qr CTUBE-iOS.zip .
+          cd ../..
+          gh release create "$TAG" --title "CTUBE $TAG" --generate-notes || true
+          ASSET="installers/ios/CTUBE-iOS.zip"
+          if [ -f "installers/ios/CTUBE.ipa" ]; then
+            ASSET="installers/ios/CTUBE.ipa"
+          fi
+          if ! gh release upload "$TAG" "$ASSET" --clobber; then
+            echo "::warning::gh release upload failed for $TAG"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
