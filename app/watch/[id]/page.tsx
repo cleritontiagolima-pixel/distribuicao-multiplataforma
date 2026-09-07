@@ -39,23 +39,6 @@ interface VideoDetails {
   description?: string;
 }
 
-function ClientOnly({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  if (!mounted) {
-    return (
-      <AppShell>
-        <div className="max-w-[1800px] mx-auto p-4 md:p-6">
-          <div className="skeleton w-full aspect-video rounded-xl" />
-        </div>
-      </AppShell>
-    );
-  }
-  return <>{children}</>;
-}
-
 function WatchContent() {
   const params = useParams();
   const router = useRouter();
@@ -75,11 +58,12 @@ function WatchContent() {
   const playlists = getPlaylists();
 
   const fetchWithTimeout = useCallback(
-    async (url: string, timeoutMs = 15000) => {
+    async (url: string, timeoutMs = 20000) => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return await res.json();
       } finally {
         clearTimeout(timeout);
@@ -90,15 +74,21 @@ function WatchContent() {
 
   // Load video details and related videos
   useEffect(() => {
+    let cancelled = false;
+
     async function loadVideo() {
       if (!videoId) return;
       setLoading(true);
       setError(null);
+      setStarted(false);
+
       try {
         const [detailsData, relatedData] = await Promise.all([
-          fetchWithTimeout(`/api/videos/${videoId}`, 20000),
-          fetchWithTimeout(`/api/videos/${videoId}?type=related`, 20000),
+          fetchWithTimeout(`/api/videos/${videoId}`, 25000),
+          fetchWithTimeout(`/api/videos/${videoId}?type=related`, 25000),
         ]);
+
+        if (cancelled) return;
 
         if (detailsData.video) {
           setVideo(detailsData.video);
@@ -126,6 +116,8 @@ function WatchContent() {
               ],
             });
           }
+        } else {
+          setError("Vídeo não encontrado.");
         }
 
         setRelatedVideos(
@@ -136,54 +128,48 @@ function WatchContent() {
           }))
         );
       } catch (err) {
+        if (cancelled) return;
         console.error("Error loading video:", err);
         if (err instanceof DOMException && err.name === "AbortError") {
-          setError("Tempo esgotado ao carregar vídeo.");
+          setError("Tempo esgotado ao carregar vídeo. Verifique sua conexão.");
         } else {
-          setError("Erro ao carregar vídeo.");
+          setError("Erro ao carregar vídeo. Tente novamente.");
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     loadVideo();
+    return () => {
+      cancelled = true;
+    };
   }, [videoId, fetchWithTimeout]);
 
   // Media Session action handlers for lock screen controls
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
 
-    navigator.mediaSession.setActionHandler("play", () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"playVideo","args":""}',
-        "*"
-      );
-    });
+    const postToIframe = (func: string, args?: unknown) => {
+      const msg = args
+        ? JSON.stringify({ event: "command", func, args })
+        : JSON.stringify({ event: "command", func, args: "" });
+      iframeRef.current?.contentWindow?.postMessage(msg, "*");
+    };
 
-    navigator.mediaSession.setActionHandler("pause", () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"pauseVideo","args":""}',
-        "*"
-      );
-    });
-
-    navigator.mediaSession.setActionHandler("seekbackward", () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"seekBy","args":[-10]}',
-        "*"
-      );
-    });
-
-    navigator.mediaSession.setActionHandler("seekforward", () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"seekBy","args":[10]}',
-        "*"
-      );
-    });
-
+    navigator.mediaSession.setActionHandler("play", () =>
+      postToIframe("playVideo")
+    );
+    navigator.mediaSession.setActionHandler("pause", () =>
+      postToIframe("pauseVideo")
+    );
+    navigator.mediaSession.setActionHandler("seekbackward", () =>
+      postToIframe("seekBy", [-10])
+    );
+    navigator.mediaSession.setActionHandler("seekforward", () =>
+      postToIframe("seekBy", [10])
+    );
     navigator.mediaSession.setActionHandler("previoustrack", null);
-
     navigator.mediaSession.setActionHandler("nexttrack", () => {
       if (relatedVideos.length > 0) {
         router.push(`/watch/${relatedVideos[0].id}`);
@@ -222,22 +208,25 @@ function WatchContent() {
   };
 
   return (
-    <AppShell>
-      <div className="max-w-[1800px] mx-auto p-4 md:p-6">
-        {error && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <p className="text-[var(--muted-foreground)] mb-4">{error}</p>
-            <button
-              onClick={() => router.push("/")}
-              className="px-4 py-2 rounded-full bg-[var(--primary)] text-white hover:opacity-90 transition-opacity"
-            >
-              Voltar ao início
-            </button>
-          </div>
-        )}
+    <div className="max-w-[1800px] mx-auto p-4 md:p-6">
+      {error && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <p className="text-[var(--muted-foreground)] mb-4">{error}</p>
+          <button
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              setStarted(false);
+            }}
+            className="px-4 py-2 rounded-full bg-[var(--primary)] text-white hover:opacity-90 transition-opacity"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      )}
 
-        {!error && (
-          <div className="flex flex-col xl:flex-row gap-6">
+      {!error && (
+        <div className="flex flex-col xl:flex-row gap-6">
             {/* Main content */}
             <div className="flex-1 min-w-0">
               {/* Player — click-to-play poster guarantees autoplay works in
@@ -275,6 +264,10 @@ function WatchContent() {
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                     allowFullScreen
                     className="w-full h-full"
+                    onError={() => {
+                      console.error("Iframe failed to load");
+                      setError("Erro ao carregar o player de vídeo.");
+                    }}
                   />
                 )}
               </div>
@@ -303,6 +296,7 @@ function WatchContent() {
                             fill
                             className="object-cover"
                             sizes="40px"
+                            unoptimized
                           />
                         </div>
                       )}
@@ -458,11 +452,11 @@ function WatchContent() {
                     Vídeo não encontrado
                   </p>
                 </div>
-              )}
-            </div>
+            )}
+          </div>
 
-            {/* Related videos sidebar */}
-            <div className="xl:w-[400px] shrink-0">
+          {/* Related videos sidebar */}
+          <div className="xl:w-[400px] shrink-0">
               <h3 className="text-sm font-medium mb-4 text-[var(--muted-foreground)]">
                 Vídeos relacionados
               </h3>
@@ -495,19 +489,18 @@ function WatchContent() {
                         horizontal
                       />
                     ))}
-              </div>
             </div>
           </div>
-        )}
-      </div>
-    </AppShell>
+        </div>
+      )}
+    </div>
   );
 }
 
 export default function WatchPage() {
   return (
-    <ClientOnly>
+    <AppShell>
       <WatchContent />
-    </ClientOnly>
+    </AppShell>
   );
 }

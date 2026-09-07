@@ -56,26 +56,25 @@ if (!existsSync(outIndex)) {
     .container { text-align: center; }
     h1 { font-size: 2rem; margin-bottom: 1rem; color: #ff4e45; }
     p { color: #aaa; line-height: 1.6; }
-    a { color: #ff4e45; }
+    .spinner {
+      width: 48px; height: 48px; border: 3px solid #333;
+      border-top-color: #ff4e45; border-radius: 50%;
+      animation: spin 0.8s linear infinite; margin: 0 auto 1.5rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div class="container">
+    <div class="spinner"></div>
     <h1>▶ CTUBE</h1>
     <p>Carregando aplicativo...</p>
-    <p id="status" style="font-size: 0.85rem; margin-top: 1rem"></p>
+    <noscript>
+      <p style="margin-top: 1rem">
+        <a href="${CTUBE_URL}">Abrir o CTUBE</a>
+      </p>
+    </noscript>
   </div>
-  <script>
-    var APP_URL = ${JSON.stringify(CTUBE_URL)};
-    // If this shell is ever loaded (no server.url configured), redirect to the app.
-    try {
-      if (window.location.origin.indexOf("vercel.app") === -1) {
-        window.location.replace(APP_URL);
-      }
-    } catch (e) {
-      document.getElementById("status").textContent = "Não foi possível abrir o CTUBE.";
-    }
-  </script>
 </body>
 </html>
 `

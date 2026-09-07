@@ -14,34 +14,24 @@
     .container { text-align: center; }
     h1 { font-size: 2rem; margin-bottom: 1rem; color: #ff4e45; }
     p { color: #aaa; line-height: 1.6; }
-    a { color: #ff4e45; }
+    .spinner {
+      width: 48px; height: 48px; border: 3px solid #333;
+      border-top-color: #ff4e45; border-radius: 50%;
+      animation: spin 0.8s linear infinite; margin: 0 auto 1.5rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>▶ CTUBE</h1>
+    <div class="spinner"></div>
+    <h1>&#9654; CTUBE</h1>
     <p>Carregando aplicativo...</p>
-    <p id="status" style="font-size: 0.85rem; margin-top: 1rem"></p>
     <noscript>
       <p style="margin-top: 1rem">
         <a href="https://distribuicao-multiplataforma.vercel.app">Abrir o CTUBE</a>
       </p>
     </noscript>
   </div>
-  <script>
-    // Hosted app URL — same default used by the desktop (Electron) app.
-    var APP_URL = "https://distribuicao-multiplataforma.vercel.app";
-    // If this shell is ever loaded (e.g. Capacitor without server.url),
-    // redirect to the hosted app instead of showing a dead "Loading" screen.
-    try {
-      if (window.location.origin.indexOf("vercel.app") === -1) {
-        window.location.replace(APP_URL);
-      } else {
-        document.getElementById("status").textContent = "Aplicativo não encontrado.";
-      }
-    } catch (e) {
-      document.getElementById("status").textContent = "Não foi possível abrir o CTUBE.";
-    }
-  </script>
 </body>
 </html>

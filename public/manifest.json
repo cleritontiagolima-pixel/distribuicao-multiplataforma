@@ -1,12 +1,16 @@
 {
   "name": "CTUBE - Vídeos Online",
   "short_name": "CTUBE",
-  "description": "Assista vídeos online de graça. O melhor player para YouTube.",
+  "description": "CTUBE-Videos sem anúncios",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "background_color": "#0f0f0f",
   "theme_color": "#0f0f0f",
   "orientation": "any",
+  "handle_links": "preferred",
   "categories": ["entertainment", "video"],
   "icons": [
     {
@@ -36,7 +40,8 @@
       "src": "/ctube-logo.png",
       "sizes": "512x512",
       "type": "image/png",
-      "form_factor": "wide"
+      "form_factor": "wide",
+      "label": "CTUBE - Player de vídeo"
     }
   ],
   "shortcuts": [
