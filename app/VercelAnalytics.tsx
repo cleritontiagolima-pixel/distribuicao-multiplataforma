@@ -16,7 +16,7 @@ export default function VercelAnalytics() {
   useEffect(() => {
     // Only load analytics on actual Vercel deployment
     const hostname = window.location.hostname;
-    const isElectron = !!(window as any).electronAPI?.isElectron;
+    const isElectron = !!(window as Window & { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron;
     const isLocal =
       hostname === "localhost" ||
       hostname === "127.0.0.1" ||

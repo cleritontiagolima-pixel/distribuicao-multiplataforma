@@ -19,6 +19,7 @@ import {
   LogOut,
   Play,
   TrendingUp,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getCurrentUser, logout, type User as UserType } from "@/lib/storage";
@@ -47,6 +48,7 @@ const navItems = [
   { icon: PlaySquare, label: "Suas playlists", href: "/playlists", auth: true },
   { icon: ThumbsUp, label: "Vídeos curtidos", href: "/liked", auth: true },
   { icon: ListVideo, label: "Assistir mais tarde", href: "/watch-later", auth: true },
+  { icon: Download, label: "Downloads", href: "/downloads" },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -65,11 +67,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   // Electron: show menu bar only for admin user
   useEffect(() => {
-    if (typeof window !== "undefined" && (window as any).electronAPI) {
+    const electronAPI = (window as Window & { electronAPI?: { showMenuBar?: () => void; hideMenuBar?: () => void } }).electronAPI;
+    if (typeof window !== "undefined" && electronAPI) {
       if (user && user.email === "ctinformatic@gmail.com") {
-        (window as any).electronAPI.showMenuBar();
+        electronAPI.showMenuBar?.();
       } else {
-        (window as any).electronAPI.hideMenuBar();
+        electronAPI.hideMenuBar?.();
       }
     }
   }, [user]);

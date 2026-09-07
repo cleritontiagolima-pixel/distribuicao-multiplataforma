@@ -273,12 +273,12 @@ export default function AdminPage() {
                 </div>
                 <p className="text-sm text-[var(--muted-foreground)] mb-2">
                   {config?.plan === "paid"
-                    ? "Modo PAGO ativo — usuários precisam de licença (365 dias)."
-                    : "Modo GRATUITO ativo — todos podem usar sem licença."}
+                    ? "Modo PAGO — downloads offline exigem licença (365 dias). O app continua grátis para assistir."
+                    : "Modo GRATUITO — downloads offline liberados para todos."}
                 </p>
                 <p className="text-xs text-[var(--muted-foreground)] leading-relaxed">
-                  Para mudar, configure as variáveis de ambiente no Vercel/Keys tab e
-                  faça deploy de novo:
+                  Para exigir licença nos downloads, configure as variáveis de ambiente
+                  no Vercel/Keys tab e faça deploy de novo:
                 </p>
                 <pre className="text-[11px] mt-2 p-3 rounded-lg overflow-x-auto" style={{ background: "var(--secondary)" }}>
 {`CTUBE_PLAN=paid

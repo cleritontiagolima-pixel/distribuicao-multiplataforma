@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 export default function ServiceWorkerRegister() {
   useEffect(() => {
-    const isElectron = !!(window as any).electronAPI?.isElectron;
+    const isElectron = !!(window as Window & { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron;
 
     if (isElectron) {
       // Unregister any existing service worker in Electron to prevent

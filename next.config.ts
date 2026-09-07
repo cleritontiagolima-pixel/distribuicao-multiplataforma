@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ["*.daytonaproxy01.net", "https://*.daytonaproxy01.net"],
+  // jsdom/BotGuard are only used server-side (PO-token downloads); keep them
+  // out of the Turbopack bundle and load them from node_modules at runtime.
+  serverExternalPackages: ["jsdom", "bgutils-js"],
   images: {
     remotePatterns: [
       {

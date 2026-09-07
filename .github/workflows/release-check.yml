@@ -1,0 +1,39 @@
+name: CTUBE Release Check
+# Verifica que a release de uma tag v* tem todos os instaladores (.exe, .apk e
+# .zip/.ipa). Dispara quando a CTUBE Windows termina (as três rodam em paralelo,
+# então o script espera os artefatos das outras) e manualmente via workflow_dispatch.
+on:
+  workflow_run:
+    workflows: ["CTUBE Windows"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag da release a verificar (ex.: v1.2.0). Padrão: release mais recente."
+        required: false
+
+jobs:
+  verify-assets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Verify release assets
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ] && [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Para execuções disparadas por tag, o head_branch é a própria tag.
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            case "$BRANCH" in
+              v*) TAG="$BRANCH" ;;
+            esac
+          fi
+          node scripts/check-release-assets.mjs ${TAG:+--tag "$TAG"} --wait 30
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

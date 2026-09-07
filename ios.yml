@@ -54,40 +54,45 @@ jobs:
             echo "$PROVISIONING_PROFILE" | base64 --decode > "$HOME/Library/MobileDevice/Provisioning Profiles/CTUBE.mobileprovision"
           fi
           echo "Apple certificate imported"
-      # Build for real devices (generic/platform=iOS). When signing secrets are
-      # present the app is signed; otherwise it builds unsigned (for simulator).
-      - name: Build iOS Device
+      # Build for real devices (generic/platform=iOS). The previous version of
+      # this step ran an UNSIGNED build with CODE_SIGNING_ALLOWED=NO whenever
+      # the Apple signing secrets were missing — that produced an "App.app"
+      # bundle that, when copied to a real iPhone, shows the launcher
+      # for a fraction of a second and is killed (the classic "abre e fecha"
+      # symptom). We now build the device target ONLY when a signing
+      # certificate is present, so the artifact handed to the consumer is
+      # always installable. Without secrets we still build a simulator app
+      # (so QA can still use it on a Mac) but skip the broken device path.
+      - name: Build iOS Device (signed only)
+        if: env.CERTIFICATE_OSX_APPLICATION != ''
         run: |
           BUILD_TARGET=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
           FLAG="-workspace"
           if [ -z "$BUILD_TARGET" ]; then
-            # Capacitor 8 creates SPM projects that have no .xcworkspace
             BUILD_TARGET=$(find ios -name "*.xcodeproj" -maxdepth 3 | head -1)
             FLAG="-project"
             echo "No workspace found, using project: $BUILD_TARGET"
           fi
-          echo "Building: $BUILD_TARGET for real devices"
-          if [ -n "$CERTIFICATE_OSX_APPLICATION" ]; then
-            xcodebuild \
-              $FLAG "$BUILD_TARGET" \
-              -scheme App \
-              -destination "generic/platform=iOS" \
-              -configuration Debug \
-              -derivedDataPath build/device \
-              -allowProvisioningUpdates
-          else
-            xcodebuild \
-              $FLAG "$BUILD_TARGET" \
-              -scheme App \
-              -destination "generic/platform=iOS" \
-              -configuration Debug \
-              -derivedDataPath build/device \
-              CODE_SIGNING_ALLOWED=NO \
-              CODE_SIGNING_REQUIRED=NO \
-              CODE_SIGN_IDENTITY="" \
-              CODE_SIGN_ENTITLEMENTS=""
-          fi
-      # Also build a simulator version for testing without a device.
+          echo "Building: $BUILD_TARGET for real devices (SOMENTE COM CERTIFICADO)"
+          xcodebuild \
+            $FLAG "$BUILD_TARGET" \
+            -scheme App \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            -derivedDataPath build/device \
+            -allowProvisioningUpdates
+      - name: Skip device build (no signing secrets)
+        if: env.CERTIFICATE_OSX_APPLICATION == ''
+        run: |
+          echo "::warning::Sem secrets da Apple (CERTIFICATE_OSX_APPLICATION / PROVISIONING_PROFILE)."
+          echo "::warning::Pulando build de device. O artefato entregue AGORA será"
+          echo "::warning::APENAS o App.app do SIMULADOR — NÃO instale num iPhone real"
+          echo "::warning::(seria o motivo do seu app 'abrir e fechar'). Para gerar"
+          echo "::warning::um IPA instalável em device real, cadastre os secrets da"
+          echo "::warning::sua conta Apple Developer Program (\$99/ano) em Settings →"
+          echo "::warning::Secrets and variables → Actions."
+      # Build a simulator version for QA on Mac. Independent of the device build
+      # so QA always has something to smoke-test, even when no Apple secrets exist.
       - name: Build iOS Simulator
         run: |
           BUILD_TARGET=$(find ios -name "*.xcworkspace" -maxdepth 3 | head -1)
@@ -146,27 +151,35 @@ jobs:
       - name: Copy app bundles to installers folder
         run: |
           mkdir -p installers/ios
-          # Signed .ipa (real devices) — preferred artifact
+          # 1) IPA assinado (preferido — instalável em iPhone real)
           IPA=$(find installers/ios -maxdepth 1 -name "*.ipa" | head -1)
           if [ -n "$IPA" ]; then
             mv "$IPA" installers/ios/CTUBE.ipa
-            echo "IPA saved: installers/ios/CTUBE.ipa"
+            echo "IPA salvo: installers/ios/CTUBE.ipa"
           fi
-          # Device build
+          # 2) Device app (somente quando assinado)
           DEVICE_APP=$(find build/device -name "App.app" -type d | head -1)
           if [ -n "$DEVICE_APP" ]; then
             cp -r "$DEVICE_APP" installers/ios/CTUBE-Device.app
-            echo "Device app saved: installers/ios/CTUBE-Device.app"
+            echo "Device app salvo: installers/ios/CTUBE-Device.app"
           fi
-          # Simulator build
+          # 3) Simulator (instalável APENAS em simulador do Mac — não em iPhone real)
           SIM_APP=$(find build/simulator -name "App.app" -type d | head -1)
           if [ -n "$SIM_APP" ]; then
             cp -r "$SIM_APP" installers/ios/CTUBE-Simulator.app
-            echo "Simulator app saved: installers/ios/CTUBE-Simulator.app"
+            echo "Simulator app salvo: installers/ios/CTUBE-Simulator.app"
           fi
-          # Fallback: if neither was found, zip the entire build
+          # 4) Quando NÃO há secrets da Apple, zipamos SÓ o simulador e marcamos
+          #    no nome do arquivo que ele NÃO serve para iPhone real. Evita o
+          #    cenário do consumidor baixar um "CTUBE-iOS.zip" cheio de .app
+          #    de simulador achando que é instalável.
+          if [ -z "$DEVICE_APP" ] && [ -z "$IPA" ] && [ -n "$SIM_APP" ]; then
+            cd installers/ios && rm -rf CTUBE-Simulator.app && zip -r CTUBE-iOS-Simulator-Only.zip CTUBE-Simulator.app && cd ../..
+            echo "::warning::Sem signing. Zip gerado contém apenas o simulador."
+          fi
+          # 5) Fallback absoluto
           if [ -z "$DEVICE_APP" ] && [ -z "$SIM_APP" ] && [ -z "$IPA" ]; then
-            echo "App bundles not found, zipping build output"
+            echo "Nenhum bundle encontrado — zipando build/."
             cd build && zip -r ../installers/ios/CTUBE-iOS-build.zip . && cd ..
           fi
       - uses: actions/upload-artifact@v6

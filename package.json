@@ -1,6 +1,7 @@
 {
   "name": "ctube",
-  "version": "1.1.0",
+  "version": "1.1.2",
+  "packageManager": "pnpm@11.25.0",
   "description": "CTUBE - Player de vídeo multiplataforma",
   "author": "CTUBE",
   "private": true,
@@ -45,7 +46,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "start": "next start",
+    "postinstall": "node scripts/patch-android-background.mjs && node scripts/patch-ios-background.mjs || true",
     "desktop": "electron desktop/main.cjs",
     "desktop:build": "pnpm build && electron-builder",
     "mobile:shell": "node scripts/prepare-mobile-shell.mjs",
@@ -56,7 +60,8 @@
     "build:desktop": "pnpm build && npx electron-builder --publish never",
     "build:desktop:win": "pnpm build && npx electron-builder --win --publish never",
     "build:desktop:mac": "pnpm build && npx electron-builder --mac --publish never",
-    "build:desktop:linux": "pnpm build && npx electron-builder --linux --publish never"
+    "build:desktop:linux": "pnpm build && npx electron-builder --linux --publish never",
+    "check:types": "tsc --noEmit"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
@@ -64,8 +69,10 @@
     "@capacitor/core": "^8.5.0",
     "@capacitor/ios": "^8.5.0",
     "@vercel/analytics": "1.6.1",
+    "bgutils-js": "^4.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "jsdom": "^30.0.1",
     "lucide-react": "^1.16.0",
     "next": "16.3.3",
     "react": "^19",
@@ -84,6 +91,8 @@
     "@types/react-dom": "^19",
     "electron": "^44.0.0",
     "electron-builder": "^26.15.3",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.3.3",
     "postcss": "^8.5",
     "tailwindcss": "^4.3.3",
     "typescript": "5.7.3"
