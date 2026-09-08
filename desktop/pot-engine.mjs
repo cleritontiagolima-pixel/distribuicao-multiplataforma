@@ -103,11 +103,17 @@ async function loadInterpreter(interpreterUrl) {
 }
 
 // Performs the BotGuard attestation. Returns { minter, refreshAt, installEnv, restoreEnv }.
+// Bundler-proof dynamic import: Turbopack/webpack rewrite `await import("x")`
+// into `require("x")`, which fails on Node < 22.12 for ESM-only packages
+// (jsdom pulls @exodus/bytes which is "type": "module"). Evaluating the
+// specifier at runtime keeps the import a real ESM dynamic import.
+const V = (name) => name;
+
 async function attest() {
-  const { JSDOM } = await import("jsdom");
-  const { BotGuardClient } = await import("bgutils-js/botguard");
-  const { WebPoMinter } = await import("bgutils-js/webpo");
-  const { buildURL, parseLooseJSON, getHeaders } = await import("bgutils-js/utils");
+  const { JSDOM } = await import(V("jsdom"));
+  const { BotGuardClient } = await import(V("bgutils-js/botguard"));
+  const { WebPoMinter } = await import(V("bgutils-js/webpo"));
+  const { buildURL, parseLooseJSON, getHeaders } = await import(V("bgutils-js/utils"));
 
   const dom = new JSDOM(
     '<!DOCTYPE html><html lang="en"><head><title></title></head><body></body></html>',
