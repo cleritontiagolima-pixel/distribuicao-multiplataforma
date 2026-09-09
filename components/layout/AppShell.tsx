@@ -104,7 +104,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex flex-col h-screen overflow-hidden">
         {/* Header */}
         <header
-          className="fixed top-0 left-0 right-0 z-40 flex items-center justify-between h-14 px-4"
+          className="fixed left-0 right-0 z-40 flex items-center justify-between h-14 px-4 header-safe-top"
           style={{ background: "var(--background)" }}
         >
           {/* Left: Menu + Logo */}
@@ -220,11 +220,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <div className="flex flex-1 pt-14">
+        <div className="flex flex-1 pt-14 main-safe-top">
           {/* Desktop Sidebar */}
           <aside
             className={cn(
-              "hidden md:flex flex-col fixed top-14 bottom-0 left-0 z-30 overflow-y-auto overflow-x-hidden transition-all duration-200",
+              "hidden md:flex flex-col fixed bottom-0 left-0 z-30 overflow-y-auto overflow-x-hidden transition-all duration-200 header-safe-top",
               miniSidebar ? "w-[72px]" : "w-[240px]"
             )}
             style={{ background: "var(--background)" }}
@@ -287,7 +287,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 onClick={() => setMobileMenuOpen(false)}
               />
               <aside
-                className="fixed top-0 bottom-0 left-0 z-50 w-[280px] overflow-y-auto md:hidden"
+                className="fixed bottom-0 left-0 z-50 w-[280px] overflow-y-auto md:hidden header-safe-top"
                 style={{ background: "var(--background)" }}
               >
                 <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
@@ -337,7 +337,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               "flex-1 overflow-y-auto overflow-x-hidden transition-all duration-200 ml-0",
               miniSidebar ? "md:ml-[72px]" : "md:ml-[240px]"
             )}
-            style={{ height: "calc(100vh - 3.5rem)" }}
+            style={{ height: "calc(100vh - var(--header-h))" }}
           >
             {children}
           </main>

@@ -39,11 +39,16 @@ const config: CapacitorConfig = {
   appName: 'CTUBE',
   webDir: 'out',
   server: { url: '${CTUBE_URL}', cleartext: false },
-  ios: {
-    limitsNavigationsToAppBoundDomains: false,
-  },
+  // Áudio/vídeo continua com app em segundo plano/tela bloqueada: KeepRunning
+  // já é true por padrão no Capacitor + permissões WAKE_LOCK/FOREGROUND_SERVICE
+  // aplicadas pelo patch-android-background.mjs + UIBackgroundModes=audio no iOS.
   android: {
     allowMixedContent: false,
+  },
+  ios: {
+    limitsNavigationsToAppBoundDomains: false,
+    // Continua tocando com a tela bloqueada (junto com UIBackgroundModes=audio
+    // adicionado pelo patch-ios-background.mjs)
   },
 };
 

@@ -148,6 +148,25 @@
 #main-scroll {
   padding-left: env(safe-area-inset-left, 0);
   padding-right: env(safe-area-inset-right, 0);
+  padding-bottom: var(--safe-bottom);
+}
+
+/* Área segura do topo (barra de status do Android / notch do iPhone).
+   No app nativo o Capacitor injeta --safe-area-inset-top com o valor real;
+   no navegador usamos env(safe-area-inset-top). */
+:root {
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --header-h: calc(3.5rem + var(--safe-top));
+}
+
+/* Elementos fixados ao topo do app (header, sidebar) descem abaixo da
+   barra de status. */
+.header-safe-top {
+  top: var(--safe-top);
+}
+.main-safe-top {
+  margin-top: var(--safe-top);
 }
 
 /* Scrollbar styling */
