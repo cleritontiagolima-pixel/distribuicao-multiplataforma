@@ -108,7 +108,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           style={{ background: "var(--background)" }}
         >
           {/* Left: Menu + Logo */}
-          <div className="flex items-center gap-2 min-w-[200px]">
+          <div className="flex items-center gap-2 md:min-w-[200px]">
             <button
               onClick={() => {
                 if (window.innerWidth < 768) {
@@ -151,7 +151,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </form>
 
           {/* Right: User */}
-          <div className="flex items-center gap-2 min-w-[200px] justify-end">
+          <div className="flex items-center gap-2 md:min-w-[200px] justify-end">
             <button className="p-2 rounded-full hover:bg-[var(--secondary)] transition-colors hidden sm:block">
               <Bell className="w-5 h-5" />
             </button>
@@ -333,19 +333,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {/* Main Content */}
           <main
             suppressHydrationWarning
-            className="flex-1 overflow-y-auto overflow-x-hidden transition-all duration-200"
-            style={{
-              height: "calc(100vh - 3.5rem)",
-              marginLeft: miniSidebar ? 72 : 240,
-            }}
+            className={cn(
+              "flex-1 overflow-y-auto overflow-x-hidden transition-all duration-200 ml-0",
+              miniSidebar ? "md:ml-[72px]" : "md:ml-[240px]"
+            )}
+            style={{ height: "calc(100vh - 3.5rem)" }}
           >
-            <style>{`
-              @media (max-width: 767px) {
-                main[style*="marginLeft"] {
-                  margin-left: 0 !important;
-                }
-              }
-            `}</style>
             {children}
           </main>
         </div>

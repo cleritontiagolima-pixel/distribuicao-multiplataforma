@@ -136,6 +136,20 @@
   }
 }
 
+/* Mobile: impede zoom acidental em inputs (iOS) e respeita áreas seguras */
+@supports (-webkit-touch-callout: none) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+#main-scroll {
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

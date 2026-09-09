@@ -49,10 +49,10 @@ export default function CategoryChips({
 
   return (
     <div className="relative flex items-center gap-2 py-3">
-      {/* Left arrow */}
+      {/* Left arrow (desktop only — no mouse hover to scroll on touch) */}
       <button
         onClick={() => handleScroll("left")}
-        className="absolute left-0 z-10 w-10 h-full flex items-center justify-center"
+        className="hidden md:flex absolute left-0 z-10 w-10 h-full items-center justify-center"
         style={{
           background:
             "linear-gradient(to right, var(--background) 50%, transparent)",
@@ -64,7 +64,7 @@ export default function CategoryChips({
       {/* Chips */}
       <div
         ref={scrollRef}
-        className="flex gap-2 overflow-x-auto scrollbar-hide px-8"
+        className="flex gap-2 overflow-x-auto scrollbar-hide px-1 md:px-8"
         style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
       >
         {categories.map((cat) => (
@@ -81,10 +81,10 @@ export default function CategoryChips({
         ))}
       </div>
 
-      {/* Right arrow */}
+      {/* Right arrow (desktop only) */}
       <button
         onClick={() => handleScroll("right")}
-        className="absolute right-0 z-10 w-10 h-full flex items-center justify-center"
+        className="hidden md:flex absolute right-0 z-10 w-10 h-full items-center justify-center"
         style={{
           background:
             "linear-gradient(to left, var(--background) 50%, transparent)",
