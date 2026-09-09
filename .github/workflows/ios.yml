@@ -33,6 +33,23 @@ jobs:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
       - run: npx cap add ios || true
       - run: npx cap sync ios
+      # ANTI-CRASH: garante que o config embutido no bundle iOS aponte para o
+      # URL correto do deploy (o Capacitor copia capacitor.config.json para
+      # ios/App/App/capacitor.config.json durante o sync).
+      - name: Verify Capacitor config in iOS bundle
+        run: |
+          node -e "
+            const fs = require('fs');
+            const p = 'ios/App/App/capacitor.config.json';
+            if (!fs.existsSync(p)) { console.error('❌ ' + p + ' ausente'); process.exit(1); }
+            const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            const url = (cfg.server && cfg.server.url) || '';
+            if (!/^https:\/\/[^\\s]+$/i.test(url)) {
+              console.error('❌ server.url inválido no bundle iOS: ' + JSON.stringify(url));
+              process.exit(1);
+            }
+            console.log('✔ server.url iOS: ' + url);
+          "
       # Allow audio to keep playing with the screen locked (UIBackgroundModes=audio)
       - name: Patch iOS background audio
         run: node scripts/patch-ios-background.mjs

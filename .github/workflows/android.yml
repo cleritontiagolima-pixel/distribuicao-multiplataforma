@@ -64,6 +64,10 @@ jobs:
           fi
           cp "$APK_PATH" installers/android/CTUBE.apk
           echo "APK saved: $(ls -lh installers/android/CTUBE.apk)"
+      # ANTI-CRASH: valida que o capacitor.config.json dentro do APK tem um
+      # server.url https válido. Impede publicar um APK que abre e fecha.
+      - name: Verify embedded Capacitor config
+        run: node scripts/check-mobile-config.mjs installers/android/CTUBE.apk
       - uses: actions/upload-artifact@v6
         with:
           name: CTUBE-Android

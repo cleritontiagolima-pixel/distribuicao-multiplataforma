@@ -5,7 +5,30 @@ import { join } from "path";
 // Android/iOS builds always point at the working deployment even when the
 // CTUBE_URL secret is not configured in the CI environment.
 const DEFAULT_APP_URL = "https://distribuicao-multiplataforma.vercel.app";
-const CTUBE_URL = process.env.CTUBE_URL?.trim() || DEFAULT_APP_URL;
+
+// CRÍTICO (anti-crash "abre e fecha"): o WebView nativo carrega EXATAMENTE este
+// URL. Se o secret CTUBE_URL estiver vazio ou com texto inválido (ex.: o
+// comentário "URL do app web implantado", sem https://, com espaços), o app
+// nativo quebra na inicialização. Validamos sempre e caímos no URL padrão.
+function sanitizeAppUrl(raw) {
+  const trimmed = (raw || "").trim();
+  const valid =
+    /^https?:\/\/[^\s]+$/i.test(trimmed) &&
+    !/\s/.test(trimmed) &&
+    trimmed.length <= 200;
+  if (!valid) {
+    if (trimmed) {
+      console.warn(
+        `⚠️ CTUBE_URL inválido ("${trimmed}") — usando o URL padrão ${DEFAULT_APP_URL}.\n` +
+          `   Corrija o secret CTUBE_URL no GitHub (Settings → Secrets → Actions) com o URL completo https://...`
+      );
+    }
+    return DEFAULT_APP_URL;
+  }
+  return trimmed.replace(/\/+$/, "");
+}
+
+const CTUBE_URL = sanitizeAppUrl(process.env.CTUBE_URL);
 
 // Create capacitor.config.ts with the CTUBE_URL
 const capacitorConfig = `
