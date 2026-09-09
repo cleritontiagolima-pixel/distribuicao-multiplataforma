@@ -136,13 +136,17 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
 
   // PO-token fallback (lazy: jsdom + BotGuard are heavy and only needed here).
   try {
+    const t0 = Date.now();
     const { resolveAudioWithPot } = await import("../desktop/pot-engine.mjs");
     const stream = await withTimeout(resolveAudioWithPot(yt, videoId), 30000);
     cache[videoId] = { at: Date.now(), stream };
     return stream;
   } catch (err) {
-    console.error(`[ctube] pot resolution failed for ${videoId}:`, err);
-    throw err instanceof Error && err.message ? err : lastErr;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[ctube] pot resolution failed for ${videoId} (${Date.now() % 100000}ms):`, msg);
+    // surface the real stage in the API error message for diagnostics
+    if (err instanceof Error && err.message) err.message = `pot:${msg.slice(0, 140)}`;
+    throw err;
   }
 }
 
