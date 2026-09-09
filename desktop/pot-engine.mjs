@@ -242,6 +242,33 @@ export function mintPot(videoId) {
 }
 
 /**
+ * Server→device handoff: mints a per-video PO token and returns everything a
+ * native client (Capacitor/Electron) needs to make its own player request
+ * from the USER's IP (YouTube rejects streaming-data for datacenter IPs even
+ * with a valid pot, but accepts residential/mobile IPs).
+ *
+ * Returns { pot, visitorData, clientName, clientVersion, apiKey }.
+ */
+export async function mintPotForDevice(videoId) {
+  const pot = await mintPot(videoId);
+  const s = await ensureReady();
+  const visitorData = s?.visitorData || "";
+  if (!pot || !visitorData) throw new Error("pot:device-mint-failed");
+  // IOS client: returns url-bearing (ciphered but deciph-able) formats and
+  // accepts po_token on the player request. Client version/UA must match what
+  // youtubei.js ships (Constants.js IOS block) or the API returns
+  // FAILED_PRECONDITION.
+  return {
+    pot,
+    visitorData,
+    clientName: "IOS",
+    clientVersion: "20.11.6",
+    clientUserAgent: "com.google.ios.youtube/20.11.6 (iPhone10,4; U; CPU iOS 16_7_7 like Mac OS X)",
+    apiKey: "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
+  };
+}
+
+/**
  * Resolves the audio-only stream for a video using a PO-token protected player
  * request, and returns { url, mimeType, size, title, duration }.
  *

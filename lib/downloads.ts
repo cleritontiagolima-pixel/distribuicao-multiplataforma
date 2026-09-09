@@ -12,6 +12,11 @@ import {
   getStoredLicense,
   fetchAppConfig,
 } from "@/lib/owner";
+import {
+  isNativeApp,
+  fetchPotForDevice,
+  resolveAudioFromDevice,
+} from "@/lib/device-resolve";
 
 export interface DownloadSource {
   videoId: string;
@@ -192,6 +197,44 @@ export async function downloadAudio(
 ): Promise<DownloadedAudio> {
   const qs = buildQuery({ videoId: source.videoId });
   onProgress?.({ phase: "resolving", received: 0 });
+
+  // 0) NATIVE FALLBACK FIRST: in the Capacitor/Electron app the device can
+  // make its own player request from the user's IP (YouTube rejects
+  // datacenter IPs even with a valid pot, but accepts residential/mobile
+  // ones). The server only mints the PO token. If anything fails here we
+  // fall through to the classic server-resolved path.
+  if (isNativeApp()) {
+    try {
+      const license = getStoredLicense();
+      const potData = await fetchPotForDevice(source.videoId, license);
+      const stream = await resolveAudioFromDevice(source.videoId, potData, license);
+      onProgress?.({ phase: "downloading", received: 0, total: stream.size || undefined });
+      const direct = await fetch(stream.url, { headers: { Range: "bytes=0-" }, signal });
+      if (direct.ok) {
+        const blob = await readBodyWithProgress(direct, onProgress);
+        onProgress?.({ phase: "saving", received: blob.size, total: stream.size || blob.size });
+        const entry: DownloadedAudio = {
+          videoId: source.videoId,
+          title: stream.title || source.title,
+          channelName: source.channelName,
+          thumbnail: source.thumbnail,
+          duration: source.duration,
+          mimeType: stream.mimeType || "audio/mp4",
+          size: blob.size,
+          downloadedAt: Date.now(),
+          blob,
+        };
+        await saveDownload(entry);
+        return entry;
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === "license-required") {
+        throw new DownloadError("license", "Licença necessária para baixar.");
+      }
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      // fall through to the server-resolved path
+    }
+  }
 
   // 1) Resolve the stream URL server-side (validates the license there too).
   const res = await fetch(`/api/download/url?${qs}`, { signal });

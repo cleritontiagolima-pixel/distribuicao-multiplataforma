@@ -18,3 +18,18 @@ export declare function resolveAudioWithPot(
   yt: unknown,
   videoId: string
 ): Promise<PotAudioStream>;
+
+export interface DevicePotData {
+  pot: string;
+  visitorData: string;
+  clientName: string;
+  clientVersion: string;
+  clientUserAgent?: string;
+  apiKey: string;
+}
+
+/**
+ * Mints a per-video PO token and returns everything a native client needs to
+ * make its own player request from the user's IP.
+ */
+export declare function mintPotForDevice(videoId: string): Promise<DevicePotData>;
