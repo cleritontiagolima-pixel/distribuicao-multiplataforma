@@ -235,11 +235,40 @@ export async function resolveAudioWithPot(yt, videoId) {
   const pot = await mintPot(videoId);
   if (!pot) throw new Error("no-audio-format");
 
-  // YTMUSIC is the client that still returns cipher-protected formats; the
-  // per-video pot is appended to the deciphered googlevideo URL.
-  const info = await withTimeout(yt.getBasicInfo(videoId, { client: "YTMUSIC" }), 20000);
-  const fmt = info?.chooseFormat?.({ type: "audio", quality: "best" });
-  if (!fmt) throw new Error("no-audio-format");
+  // YTMUSIC é o cliente que ainda aceita o PO token no player request. Os
+  // formatos vêm cifrados (sem .url), então deciframos manualmente e anexamos
+  // o pot ao googlevideo URL — usar chooseFormat() falha quando nenhum formato
+  // tem URL pronta ("Streaming data not available").
+  // IOS é o fallback: quando o YTMUSIC não retorna streaming data (comum em
+  // vídeos com restrição de música), o cliente IOS costuma devolver formatos
+  // com URL já pronta e aceitável pelo googlevideo com o mesmo pot.
+  let info = null;
+  let lastErr = null;
+  for (const client of ["YTMUSIC", "IOS", "MWEB"]) {
+    try {
+      info = await withTimeout(
+        yt.getBasicInfo(videoId, { client, po_token: pot }),
+        20000
+      );
+      const af = info?.streaming_data?.adaptive_formats || [];
+      if (af.some((f) => f && f.has_audio && !f.has_video)) break;
+      info = null; // sem formatos de áudio neste cliente — tenta o próximo
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!info) throw (lastErr || new Error("no-audio-format"));
+
+  const adaptive = info?.streaming_data?.adaptive_formats || [];
+  const audioOnly = adaptive
+    .filter((f) => f && f.has_audio && !f.has_video)
+    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+  if (!audioOnly.length) throw new Error("no-audio-format");
+
+  // Prefere m4a (melhor compatibilidade com iOS/Android WebViews), senão o
+  // de maior bitrate.
+  const m4a = audioOnly.filter((f) => String(f.mime_type || "").includes("mp4"));
+  const fmt = (m4a.length ? m4a : audioOnly)[0];
 
   let url = fmt.url;
   if (!url) {
