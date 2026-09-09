@@ -36,7 +36,7 @@ const BROWSER_UA =
 const GLOBAL_KEYS = ["yt", "window", "document", "location", "origin", "navigator"];
 
 let env = null; // { dom, install(), restore(), minter, refreshAt }
-let state = null; // { minter, refreshAt }
+let state = null; // { minter, refreshAt, visitorData, session }
 let lock = null;
 let mintChain = Promise.resolve();
 
@@ -175,7 +175,12 @@ async function attest() {
     const ttl = Number(estimatedTtlSecs) || 6 * 3600;
     const threshold = Number(mintRefreshThreshold) || Math.floor(ttl * 0.6);
     const refreshAt = Date.now() + Math.max(ttl - threshold, 600) * 1000 * 0.8;
-    return { minter, refreshAt, dom };
+    // O PO token é validado contra o visitorData da sessão que faz o player
+    // request: guardamos o VISITOR_DATA da página atestada para criar uma
+    // sessão Innertube compatível (sem isso o YouTube degrada a resposta e
+    // omite as URLs de streaming, principalmente em IPs de datacenter).
+    const visitorData = dom.ytConfig?.VISITOR_DATA || "";
+    return { minter, refreshAt, dom, visitorData };
   } finally {
     restoreBrowserEnv(prev);
   }
@@ -186,7 +191,18 @@ async function ensureReady() {
   const fresh = await withLock(async () => {
     if (state && Date.now() < state.refreshAt) return state;
     const next = await attest();
-    state = { minter: next.minter, refreshAt: next.refreshAt, dom: next.dom };
+    // Recria a sessão Innertube presa ao visitorData atestado.
+    let session = null;
+    try {
+      const { Innertube } = await import(V("youtubei.js"));
+      session = next.visitorData
+        ? await Innertube.create({ visitor_data: next.visitorData, enable_session_cache: false })
+        : null;
+    } catch (err) {
+      console.error("pot: failed to create bound session:", err?.message || err);
+      session = null;
+    }
+    state = { minter: next.minter, refreshAt: next.refreshAt, dom: next.dom, visitorData: next.visitorData, session };
     return state;
   });
   return state;
@@ -235,6 +251,11 @@ export async function resolveAudioWithPot(yt, videoId) {
   const pot = await mintPot(videoId);
   if (!pot) throw new Error("no-audio-format");
 
+  // Sessão presa ao mesmo visitorData usado na atestação BotGuard: é isso
+  // que faz o YouTube devolver as URLs de streaming mesmo em IPs de datacenter.
+  const s = await ensureReady();
+  const boundYt = s?.session || yt;
+
   // YTMUSIC é o cliente que ainda aceita o PO token no player request. Os
   // formatos vêm cifrados (sem .url), então deciframos manualmente e anexamos
   // o pot ao googlevideo URL — usar chooseFormat() falha quando nenhum formato
@@ -244,10 +265,10 @@ export async function resolveAudioWithPot(yt, videoId) {
   // com URL já pronta e aceitável pelo googlevideo com o mesmo pot.
   let info = null;
   let lastErr = null;
-  for (const client of ["YTMUSIC", "IOS", "MWEB"]) {
+  for (const client of ["YTMUSIC", "IOS", "MWEB", "WEB"]) {
     try {
       info = await withTimeout(
-        yt.getBasicInfo(videoId, { client, po_token: pot }),
+        boundYt.getBasicInfo(videoId, { client, po_token: pot }),
         20000
       );
       const af = info?.streaming_data?.adaptive_formats || [];
@@ -272,8 +293,9 @@ export async function resolveAudioWithPot(yt, videoId) {
 
   let url = fmt.url;
   if (!url) {
-    if (!fmt.decipher || !yt.session?.player) throw new Error("no-audio-format");
-    url = await withTimeout(fmt.decipher(yt.session.player), 10000);
+    const playerSession = boundYt.session || yt.session;
+    if (!fmt.decipher || !playerSession?.player) throw new Error("no-audio-format");
+    url = await withTimeout(fmt.decipher(playerSession.player), 10000);
   }
   if (!url) throw new Error("no-audio-format");
 
