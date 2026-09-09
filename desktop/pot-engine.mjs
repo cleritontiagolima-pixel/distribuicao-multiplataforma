@@ -265,20 +265,27 @@ export async function resolveAudioWithPot(yt, videoId) {
   // com URL já pronta e aceitável pelo googlevideo com o mesmo pot.
   let info = null;
   let lastErr = null;
+  let hadAudio = false;
+  let clientTried = "";
   for (const client of ["YTMUSIC", "IOS", "MWEB", "WEB"]) {
     try {
+      clientTried = client;
       info = await withTimeout(
         boundYt.getBasicInfo(videoId, { client, po_token: pot }),
         20000
       );
       const af = info?.streaming_data?.adaptive_formats || [];
-      if (af.some((f) => f && f.has_audio && !f.has_video)) break;
+      if (af.some((f) => f && f.has_audio && !f.has_video)) { hadAudio = true; break; }
       info = null; // sem formatos de áudio neste cliente — tenta o próximo
     } catch (err) {
       lastErr = err;
     }
   }
-  if (!info) throw (lastErr || new Error("no-audio-format"));
+  if (!info) {
+    const stage = `pot:clients client=${clientTried} audio=${hadAudio}`;
+    console.error(`[pot] ${stage} err=${lastErr?.message || "none"}`);
+    throw (lastErr || new Error(stage));
+  }
 
   const adaptive = info?.streaming_data?.adaptive_formats || [];
   const audioOnly = adaptive
@@ -294,10 +301,10 @@ export async function resolveAudioWithPot(yt, videoId) {
   let url = fmt.url;
   if (!url) {
     const playerSession = boundYt.session || yt.session;
-    if (!fmt.decipher || !playerSession?.player) throw new Error("no-audio-format");
+    if (!fmt.decipher || !playerSession?.player) throw new Error("pot:decipher-unavailable");
     url = await withTimeout(fmt.decipher(playerSession.player), 10000);
   }
-  if (!url) throw new Error("no-audio-format");
+  if (!url) throw new Error("pot:decipher-empty");
 
   const sep = url.includes("?") ? "&" : "?";
   url = `${url}${sep}pot=${encodeURIComponent(pot)}`;
