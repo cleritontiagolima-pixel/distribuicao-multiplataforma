@@ -260,6 +260,7 @@ export async function resolveAudioWithPot(yt, videoId) {
   // que faz o YouTube devolver as URLs de streaming mesmo em IPs de datacenter.
   const s = await ensureReady();
   const boundYt = s?.session || yt;
+  console.error(`[pot] session=${s?.session ? "bound" : "caller"} visitor=${(s?.visitorData || "none").slice(0, 12)}`);
 
   // YTMUSIC é o cliente que ainda aceita o PO token no player request. Os
   // formatos vêm cifrados (sem .url), então deciframos manualmente e anexamos
