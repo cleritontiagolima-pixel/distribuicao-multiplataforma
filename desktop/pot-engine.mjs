@@ -248,8 +248,13 @@ export function mintPot(videoId) {
  * `yt` must be an Innertube instance (youtubei.js) created by the caller.
  */
 export async function resolveAudioWithPot(yt, videoId) {
-  const pot = await mintPot(videoId);
-  if (!pot) throw new Error("no-audio-format");
+  let pot = null;
+  try {
+    pot = await mintPot(videoId);
+  } catch (err) {
+    throw new Error(`pot:mint-failed:${String(err?.message || err).slice(0, 100)}`);
+  }
+  if (!pot) throw new Error("pot:mint-empty");
 
   // Sessão presa ao mesmo visitorData usado na atestação BotGuard: é isso
   // que faz o YouTube devolver as URLs de streaming mesmo em IPs de datacenter.
