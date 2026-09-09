@@ -288,7 +288,7 @@ export async function resolveAudioWithPot(yt, videoId) {
     }
   }
   if (!info) {
-    const stage = `pot:clients client=${clientTried} audio=${hadAudio}`;
+    const stage = `pot:clients client=${clientTried} audio=${hadAudio} session=${s?.session ? "bound" : "caller"}`;
     console.error(`[pot] ${stage} err=${lastErr?.message || "none"}`);
     throw (lastErr || new Error(stage));
   }
