@@ -132,14 +132,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           {/* Center: Search */}
-          <form onSubmit={handleSearch} className="flex-1 max-w-[640px] mx-4">
+          <form onSubmit={handleSearch} className="flex-1 min-w-0 max-w-[640px] mx-2 sm:mx-4">
             <div className="flex">
               <input
                 type="text"
                 placeholder="Pesquisar"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="flex-1 h-10 px-4 rounded-l-full border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:outline-none focus:border-[var(--primary)]"
+                className="flex-1 min-w-0 h-10 px-4 rounded-l-full border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)] placeholder-[var(--muted-foreground)] focus:outline-none focus:border-[var(--primary)]"
               />
               <button
                 type="submit"
@@ -151,7 +151,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </form>
 
           {/* Right: User */}
-          <div className="flex items-center gap-2 md:min-w-[200px] justify-end">
+          <div className="flex items-center gap-2 md:min-w-[200px] justify-end shrink-0">
             <button className="p-2 rounded-full hover:bg-[var(--secondary)] transition-colors hidden sm:block">
               <Bell className="w-5 h-5" />
             </button>
