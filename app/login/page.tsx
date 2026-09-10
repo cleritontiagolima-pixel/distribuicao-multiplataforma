@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Play, Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { login, register, getCurrentUser } from "@/lib/storage";
+import { OWNER_EMAIL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 function LoginForm() {
@@ -36,7 +37,26 @@ function LoginForm() {
 
     let loggedEmail = "";
     if (isLogin) {
-      const user = login(email, password);
+      let user = login(email, password);
+      if (!user && email.trim().toLowerCase() === OWNER_EMAIL) {
+        // Conta do dono: validada no servidor (funciona em qualquer aparelho,
+        // mesmo sem cadastro local prévio neste dispositivo).
+        try {
+          const res = await fetch("/api/admin/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: email.trim(),
+              password: password,
+            }),
+          });
+          if (res.ok) {
+            user = register("CTUBE Admin", OWNER_EMAIL, password) || login(OWNER_EMAIL, password);
+          }
+        } catch {
+          // sem rede — cai no erro abaixo
+        }
+      }
       if (!user) {
         setError("Email ou senha incorretos");
         setLoading(false);
