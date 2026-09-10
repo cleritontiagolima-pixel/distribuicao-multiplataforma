@@ -37,7 +37,8 @@
     ],
     "asar": false,
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "public/favicon.ico"
     },
     "mac": {
       "target": "dmg"

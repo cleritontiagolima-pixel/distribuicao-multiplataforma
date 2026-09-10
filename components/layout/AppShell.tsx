@@ -121,10 +121,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <Link href="/" className="flex items-center gap-1.5">
-              <div className="w-8 h-8 rounded-lg bg-[var(--primary)] flex items-center justify-center">
-                <Play className="w-5 h-5 text-white" />
-              </div>
+            <Link href="/" className="flex items-center gap-1.5 shrink-0">
+              {/* eslint-disable-next-line @next/next/no-img-element -- tiny logo, avoids next/image config */}
+              <img src="/icon-192.png" alt="" className="w-8 h-8 rounded-lg" />
               <span className="text-lg font-bold tracking-tight hidden sm:block">
                 CTUBE
               </span>

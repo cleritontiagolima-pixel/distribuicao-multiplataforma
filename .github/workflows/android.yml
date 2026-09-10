@@ -25,6 +25,9 @@ jobs:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
       - run: npx cap add android || true
       - run: npx cap sync android
+      # Replace the stock Capacitor launcher with the CTUBE "C" icon.
+      - name: Apply CTUBE launcher icons
+        run: node scripts/generate-icons.mjs --android android/app/src/main/res
       # Allow playback to continue with the screen locked / app in background
       - name: Patch Android background playback permissions
         run: node scripts/patch-android-background.mjs

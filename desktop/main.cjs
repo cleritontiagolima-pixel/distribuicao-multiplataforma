@@ -610,7 +610,7 @@ function waitForLocalServer(port, timeoutMs) {
 // ============================================================
 function loadingHTML(message) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>CTUBE</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23ff4e45'/><polygon points='40,25 40,75 80,50' fill='white'/></svg>">
+<link rel="icon" type="image/png" href="/icon-192.png">
 </head><body style="font-family:system-ui;background:#0f0f0f;color:#f1f1f1;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center">
     <div>
       <div style="width:60px;height:60px;border:4px solid #333;border-top:4px solid #ff4e45;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 2rem"></div>
@@ -692,9 +692,9 @@ function createWindow(targetUrl) {
   // Resolve icon path
   let iconPath;
   if (app.isPackaged) {
-    iconPath = path.join(process.resourcesPath, "static", "public", "icon.svg");
+    iconPath = path.join(process.resourcesPath, "static", "public", "icon-512.png");
   } else {
-    iconPath = path.join(__dirname, "..", "public", "icon.svg");
+    iconPath = path.join(__dirname, "..", "public", "icon-512.png");
   }
   // Fallback to .png if .svg not found
   if (!fs.existsSync(iconPath)) {

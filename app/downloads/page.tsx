@@ -10,6 +10,8 @@ import {
   KeyRound,
   Music2,
   CheckCircle2,
+  RefreshCw,
+  XCircle,
 } from "lucide-react";
 import {
   getDownloads,
@@ -23,6 +25,23 @@ import {
   LICENSE_ACTIVATED_EVENT,
 } from "@/lib/license-modal";
 import { getStoredLicense, licenseDaysLeft } from "@/lib/owner";
+import {
+  APP_VERSION,
+  getPlatform,
+  isNewerVersion,
+  openExternalUrl,
+} from "@/lib/constants";
+
+interface UpdateInfo {
+  ok: boolean;
+  tag?: string | null;
+  releaseUrl?: string | null;
+  assets?: {
+    windows?: { url: string; name: string } | null;
+    android?: { url: string; name: string } | null;
+    ios?: { url: string; name: string } | null;
+  };
+}
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 ** 3).toFixed(2) + " GB";
@@ -36,6 +55,30 @@ export default function DownloadsPage() {
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [entitled, setEntitled] = useState<boolean | null>(null);
   const urlsRef = useRef<Record<string, string>>({});
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [updateError, setUpdateError] = useState(false);
+
+  // Check the latest GitHub release so the user can update the app manually
+  // from this page (below Downloads), without waiting for the popup notifier.
+  useEffect(() => {
+    if (getPlatform() === "web") return;
+    let alive = true;
+    fetch("/api/update")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("http " + r.status))))
+      .then((data: UpdateInfo) => {
+        if (alive) setUpdate(data?.ok ? data : null);
+      })
+      .catch(() => {
+        if (alive) setUpdateError(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const latestTag = update?.tag || null;
+  const updateAvailable = !!latestTag && isNewerVersion(APP_VERSION, latestTag);
 
   const revokeAll = useCallback(() => {
     for (const url of Object.values(urlsRef.current)) URL.revokeObjectURL(url);
@@ -92,6 +135,57 @@ export default function DownloadsPage() {
             </div>
           </div>
         </div>
+
+        {/* App update — native apps only (web is always current) */}
+        {getPlatform() !== "web" && !(updateDismissed && !updateAvailable) && (
+          <div
+            className="rounded-2xl border p-4 mb-5 flex items-center justify-between gap-4 flex-wrap"
+            style={{ borderColor: "var(--border)", background: "var(--card)" }}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-[var(--primary)]/10 flex items-center justify-center shrink-0">
+                <RefreshCw className="w-5 h-5 text-[var(--primary)]" />
+              </div>
+              <div className="min-w-0">
+                <p className="font-medium text-sm">
+                  {updateAvailable
+                    ? `Nova versão disponível: ${latestTag}`
+                    : updateError && !update
+                      ? "Não foi possível verificar atualizações"
+                      : "Aplicativo atualizado"}
+                </p>
+              </div>
+            </div>
+            {updateAvailable ? (
+              <button
+                onClick={() => {
+                  const platform = getPlatform();
+                  const asset =
+                    platform === "electron"
+                      ? update!.assets?.windows
+                      : platform === "android"
+                        ? update!.assets?.android
+                        : platform === "ios"
+                          ? update!.assets?.ios
+                          : null;
+                  void openExternalUrl(asset?.url || update!.releaseUrl || "");
+                }}
+                className="flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+              >
+                <Download className="w-4 h-4" />
+                Atualizar aplicativo
+              </button>
+            ) : (
+              <button
+                onClick={() => setUpdateDismissed(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--border)] text-sm text-[var(--muted-foreground)] hover:bg-[var(--secondary)] transition-colors"
+              >
+                <XCircle className="w-4 h-4" />
+                Ok
+              </button>
+            )}
+          </div>
+        )}
 
         {/* License status */}
         {entitled === false && (

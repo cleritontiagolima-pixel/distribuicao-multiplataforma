@@ -33,6 +33,9 @@ jobs:
           CTUBE_URL: ${{ secrets.CTUBE_URL }}
       - run: npx cap add ios || true
       - run: npx cap sync ios
+      # Replace the stock Capacitor AppIcon with the CTUBE "C" icon.
+      - name: Apply CTUBE AppIcon
+        run: node scripts/generate-icons.mjs --ios ios/App/App/Assets.xcassets/AppIcon.appiconset
       # ANTI-CRASH: garante que o config embutido no bundle iOS aponte para o
       # URL correto do deploy (o Capacitor copia capacitor.config.json para
       # ios/App/App/capacitor.config.json durante o sync).
