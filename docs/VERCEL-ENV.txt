@@ -1,0 +1,44 @@
+# ============================================================
+# CTUBE — Variáveis de ambiente para a VERCEL (produção)
+# ============================================================
+# COMO USAR:
+#   1. Baixe este arquivo no seu computador.
+#   2. Preencha os valores marcados com TROQUE (veja instruções abaixo).
+#   3. Renomeie para "producao.env" (qualquer nome serve — a Vercel não
+#      importa arquivos .env diretamente; as variáveis são coladas uma a uma).
+#   4. Na Vercel: abra o projeto → Settings → Environment Variables.
+#   5. Para CADA variável abaixo, clique "Add New", cole o NOME e o VALOR,
+#      marque o ambiente "Production" e salve.
+#   6. Deployments → "..." do último deploy → "Redeploy" para aplicar.
+#
+# ------------------------------------------------------------
+# IMPORTANTE:
+# - CTUBE_PLAN=paid BLOQUEIA os downloads para quem não tem licença anual.
+#   Use "free" (ou remova a variável) para liberar downloads para todos.
+# - GERE segredos aleatórios com 64+ caracteres. No seu PC rode:
+#     node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+#   Rode 2 vezes (uma para LICENSE_SECRET, outra para ADMIN_SECRET).
+#   NÃO use o mesmo valor nos dois.
+# - Depois de trocar qualquer variável, faça um novo Deploy.
+# ------------------------------------------------------------
+
+# Modo do app: "paid" = downloads só com licença | "free" = downloads livres
+CTUBE_PLAN=paid
+
+# Link que o cliente usa para comprar o plano anual (Mercado Pago, PagSeguro,
+# WhatsApp etc.). Se ficar vazio, o app usa um mailto: para o e-mail do dono.
+CTUBE_PURCHASE_URL=
+
+# E-mail do dono/administrador (painel /admin e fallback de compra)
+CTUBE_OWNER_EMAIL=ctinformatic@gmail.com
+
+# Segredo que assina os códigos de licença (CTUBE-xxxx.yyyy). TROQUE!
+CTUBE_LICENSE_SECRET=TROQUE_POR_64_CARACTERES_ALEATORIOS_1
+
+# Segredo que assina a sessão do painel admin (12h). TROQUE!
+CTUBE_ADMIN_SECRET=TROQUE_POR_64_CARACTERES_ALEATORIOS_2
+
+# (Opcional) Hash SHA-256 da senha do dono, separado por vírgulas.
+# Se não definir, a senha padrão embutida no código continua valendo.
+# Para gerar: node -e "console.log(require('crypto').createHash('sha256').update('SUA_SENHA').digest('hex'))"
+# CTUBE_ADMIN_PASSWORD_HASH=
