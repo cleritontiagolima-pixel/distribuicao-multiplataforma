@@ -14,6 +14,11 @@ const nextConfig: NextConfig = {
   // out of the Turbopack bundle and load them from node_modules at runtime.
   serverExternalPackages: ["jsdom", "bgutils-js"],
   images: {
+    // A Vercel cobra por requisições do otimizador de imagens (/_next/image) e,
+    // ao estourar a cota, responde 402 — o que deixa TODAS as thumbnails
+    // quebradas no app. Servimos as imagens do YouTube direto (elas já vêm
+    // no tamanho certo de i.ytimg.com), sem passar pelo otimizador.
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",

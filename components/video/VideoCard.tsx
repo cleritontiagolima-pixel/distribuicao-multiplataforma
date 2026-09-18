@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import {
   MoreVertical,
   Clock,
@@ -11,6 +10,7 @@ import {
   Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import Thumb from "@/components/video/Thumb";
 import {
   addToWatchLater,
   addToPlaylist,
@@ -107,15 +107,16 @@ export default function VideoCard({
       >
         {/* Thumbnail */}
         <div className="relative w-[168px] h-[94px] md:w-[240px] md:h-[135px] rounded-lg overflow-hidden shrink-0 bg-[var(--secondary)]">
-          <Image loading={priority ? "eager" : "lazy"}
-            src={thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
+          <Thumb
+            videoId={id}
+            src={thumbnail}
             alt={title}
-            fill
+            priority={priority}
+            sizes="240px"
             className={cn(
-              "object-cover transition-transform duration-300",
+              "transition-transform duration-300",
               isHovered && "scale-105"
             )}
-            sizes="240px"
           />
           {duration && (
             <span className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded font-medium">
@@ -228,15 +229,15 @@ export default function VideoCard({
     >
       {/* Thumbnail */}
       <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-[var(--secondary)]">
-        <Image loading={priority ? "eager" : "lazy"}
-          src={thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`}
+        <Thumb
+          videoId={id}
+          src={thumbnail}
           alt={title}
-          fill
+          priority={priority}
           className={cn(
-            "object-cover transition-transform duration-300",
+            "transition-transform duration-300",
             isHovered && "scale-105"
           )}
-          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
         />
         {duration && (
           <span className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded font-medium">
@@ -259,12 +260,15 @@ export default function VideoCard({
       <div className="flex gap-3">
         {channelAvatar && (
           <div className="relative w-9 h-9 rounded-full overflow-hidden shrink-0 mt-0.5">
-            <Image loading={priority ? "eager" : "lazy"}
+            <img
               src={channelAvatar}
               alt={channelName}
-              fill
-              className="object-cover"
-              sizes="36px"
+              width={36}
+              height={36}
+              className="h-full w-full object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
             />
           </div>
         )}
