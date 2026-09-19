@@ -3,7 +3,7 @@
 // - Page navigations: network-only (never cache navigations to avoid stale SPA shells).
 // - Offline fallback: serve last cached navigation response only when truly offline.
 // - NEVER cache error responses or HTML responses for JS/CSS/font requests.
-const CACHE_NAME = "ctube-v5";
+const CACHE_NAME = "ctube-v6";
 const STATIC_ASSETS = ["/", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -63,9 +63,13 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(() =>
-          caches.match(event.request).then(
-            (cached) => cached || caches.match("/")
-          )
+          caches
+            .match(event.request)
+            .then((cached) => cached || caches.match("/"))
+            // Final safety net so the FetchEvent promise NEVER rejects
+            // (an unhandled rejection here shows as
+            // "Uncaught (in promise) TypeError: Failed to fetch" in console).
+            .then((fallback) => fallback || new Response("", { status: 503, statusText: "Offline" }))
         )
     );
     return;

@@ -154,6 +154,10 @@ export default function DownloadsPage() {
                       ? "Não foi possível verificar atualizações"
                       : "Aplicativo atualizado"}
                 </p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  Versão instalada: v{APP_VERSION}
+                  {latestTag ? ` • Mais recente: ${latestTag}` : ""}
+                </p>
               </div>
             </div>
             {updateAvailable ? (

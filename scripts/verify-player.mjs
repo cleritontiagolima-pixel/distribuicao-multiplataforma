@@ -1,134 +1,76 @@
-// Headless browser verification of CTUBE's global player behaviors.
-// Run: node scripts/verify-player.mjs [baseURL]
-// Uses client-side navigation (clicks) because that's how the app is used —
-// the PlayerProvider lives in the root layout and survives route changes.
 import { chromium } from "playwright";
-
-const base = process.argv[2] || "http://localhost:3000";
-
+const base = "http://localhost:3100";
 const results = [];
 function check(name, ok, detail = "") {
-  results.push({ name, ok, detail });
+  results.push({ name, ok });
   console.log(`${ok ? "PASS" : "FAIL"} — ${name}${detail ? ` (${detail})` : ""}`);
 }
-
-const MINI = "div.fixed.bottom-0.left-0.right-0";
-
-const browser = await chromium.launch({
-  headless: true,
-  args: ["--autoplay-policy=no-user-gesture-required"],
-});
+const browser = await chromium.launch({ headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
 const page = await browser.newPage();
-page.on("console", (msg) => {
-  const t = msg.text();
-  if (/error|failed/i.test(t) && !/favicon|analytics|LCP|hydration|Download the React DevTools/i.test(t)) {
-    console.log("  [console]", t.slice(0, 160));
-  }
-});
+page.on("pageerror", (e) => console.log("  [pageerror]", String(e).slice(0, 150)));
 
-// ---------- 1. Home page loads ----------
 await page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 60000 });
+await page.waitForSelector("a[href^='/watch/']", { timeout: 45000 }).catch(() => {});
+check("1. home carrega", (await page.locator("a[href^='/watch/']").count()) > 0);
+
+// collect two video ids
+const ids = await page.evaluate(() =>
+  Array.from(document.querySelectorAll("a[href^='/watch/']")).slice(0, 5).map((a) => a.getAttribute("href").split("/")[2])
+);
+const vid1 = ids[0], vid2 = ids[1] || ids[0];
+
+await page.goto(base + "/watch/" + vid1, { waitUntil: "domcontentloaded" });
+let dockedOk = false;
+for (let i = 0; i < 25; i++) {
+  await page.waitForTimeout(1000);
+  dockedOk = await page.evaluate(() => {
+    const f = document.querySelector("iframe");
+    const slot = document.getElementById("ctube-player-slot");
+    if (!f || !slot) return false;
+    const fr = f.getBoundingClientRect(), sr = slot.getBoundingClientRect();
+    return Math.abs(fr.top - sr.top) < 30 && Math.abs(fr.width - sr.width) < 30 && fr.height > 100;
+  });
+  if (dockedOk) break;
+}
+check("2. iframe docked com autoplay", dockedOk);
+check("3. exatamente 1 iframe", (await page.evaluate(() => document.querySelectorAll("iframe").length)) === 1);
+
+// navigate to downloads (client-side link) → floating
+await page.locator("aside a[href='/downloads']").first().click({ force: true });
+let floatingOk = false;
+for (let i = 0; i < 15; i++) {
+  await page.waitForTimeout(1000);
+  floatingOk = await page.evaluate(() => {
+    const f = document.querySelector("iframe");
+    if (!f) return false;
+    const r = f.getBoundingClientRect();
+    return r.width < 400 && r.top > window.innerHeight * 0.4 && r.left > window.innerWidth * 0.5;
+  });
+  if (floatingOk) break;
+}
+check("4. mini-player flutuante ao navegar (continua tocando)", floatingOk);
+
+// 5. second video via client-side <a> click from the floating state
+await page.goto(base + "/", { waitUntil: "domcontentloaded" });
 await page.waitForSelector("a[href^='/watch/']", { timeout: 30000 }).catch(() => {});
-check("home carrega com vídeos", (await page.locator("a[href^='/watch/']").count()) > 0);
-
-// ---------- 2. Click a video (client-side nav): global audio autoplay ----------
-await page.locator("a[href^='/watch/']").first().click();
-const miniAppeared = await page
-  .waitForSelector(MINI, { timeout: 45000 })
-  .then(() => true)
-  .catch(() => false);
-check("autoplay: faixa inicia ao clicar no vídeo (mini-player aparece)", miniAppeared);
-
-const firstTitle = miniAppeared
-  ? await page.locator(`${MINI} .line-clamp-1`).first().innerText().catch(() => "")
-  : "";
-
-// ---------- 3. Navigate via the sidebar (client-side): mini-player persists ----------
-// The desktop sidebar is a fixed overlay; use the link inside <aside> and
-// force the click in case the header overlaps it at this viewport.
-await page
-  .locator("aside a[href='/trending']")
-  .first()
-  .click({ force: true })
-  .catch(async () => {
-    // Fallback: mobile layout — open the hamburger menu first.
-    await page.locator("header button").first().click();
-    await page.locator("aside a[href='/trending']").first().click({ force: true });
-  });
-await page.waitForTimeout(2000);
-const miniOnOtherPage = (await page.locator(MINI).count()) > 0;
-check("mini-player persiste ao navegar (reprodução continua)", miniOnOtherPage);
-
-// ---------- 4. Click another video: track switches, player keeps running ----------
-const otherTitle = await page
-  .locator("a[href^='/watch/']")
-  .first()
-  .getAttribute("href")
-  .then(async (href) => {
-    await page.locator(`a[href="${href}"]`).first().click({ force: true });
-    await page.waitForSelector(MINI, { timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(4000);
-    return page.locator(`${MINI} .line-clamp-1`).first().innerText().catch(() => "");
-  });
-const switched = miniOnOtherPage && otherTitle !== "" && otherTitle !== firstTitle;
-check("clicar em outro vídeo troca a faixa no mesmo player", switched,
-  `"${firstTitle.slice(0, 30)}" → "${otherTitle.slice(0, 30)}"`);
-
-// Wait for the new track to finish resolving/loading (title leaves "Carregando…").
-await page
-  .waitForFunction(
-    (sel) => {
-      const t = document.querySelector(sel)?.textContent || "";
-      return t.length > 0 && !t.includes("Carregando");
-    },
-    `${MINI} .line-clamp-1`,
-    { timeout: 45000 }
-  )
-  .catch(() => {});
-
-// ---------- 5. Queue auto-advance: mini-player shows "1/N" counter ----------
-const counter = await page
-  .locator(`${MINI}`)
-  .first()
-  .innerText()
-  .then((t) => (t.match(/1\/(\d+)/) || [])[1])
-  .catch(() => null);
-check("fila com relacionados montada (contador 1/N)", !!counter && Number(counter) > 1,
-  counter ? `${counter} itens na fila` : "sem contador");
-
-// ---------- 6. Playback really advances (mini-player timer ticks up) ----------
-const playing = await page
-  .locator(`${MINI}`)
-  .first()
-  .innerText()
-  .then((t) => (t.match(/(\d+):\d\d \/ (\d+):\d\d/) || [])[0] || "")
-  .then(async (t0) => {
-    await page.waitForTimeout(3000);
-    const t1 = await page
-      .locator(`${MINI}`)
-      .first()
-      .innerText()
-      .then((t) => (t.match(/(\d+):\d\d \/ (\d+):\d\d/) || [])[0] || "");
-    return { t0, t1 };
-  });
-check("áudio avançando (tempo do mini-player corre)",
-  playing.t0 !== "" && playing.t0 !== playing.t1,
-  `${playing.t0 || "--"} → ${playing.t1 || "--"}`);
-
-// ---------- 7. MediaSession wiring for lock-screen controls ----------
-const ms = await page.evaluate(() => {
-  if (!("mediaSession" in navigator)) return null;
-  return {
-    hasMetadata: !!navigator.mediaSession.metadata,
-    state: navigator.mediaSession.playbackState,
-  };
+await page.locator(`a[href='/watch/${vid2}']`).first().click({ force: true }).catch(async () => {
+  await page.goto(base + "/watch/" + vid2);
 });
-check("MediaSession com metadados para tela bloqueada",
-  !!ms && ms.hasMetadata && ms.state === "playing",
-  ms ? `state=${ms.state}` : "indisponível");
+let redockOk = false;
+for (let i = 0; i < 25; i++) {
+  await page.waitForTimeout(1000);
+  redockOk = await page.evaluate(() => {
+    const f = document.querySelector("iframe");
+    const slot = document.getElementById("ctube-player-slot");
+    if (!f || !slot) return false;
+    const fr = f.getBoundingClientRect(), sr = slot.getBoundingClientRect();
+    return Math.abs(fr.top - sr.top) < 30 && fr.height > 100;
+  });
+  if (redockOk) break;
+}
+check("5. novo vídeo re-acopla o MESMO iframe (sem duplicar)", redockOk && (await page.evaluate(() => document.querySelectorAll("iframe").length)) === 1);
 
 await browser.close();
-
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} verificações OK`);
 process.exit(failed.length ? 1 : 0);

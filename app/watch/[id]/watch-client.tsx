@@ -90,15 +90,12 @@ function WatchContent() {
   const [showDescription, setShowDescription] = useState(false);
   const [liked, setLiked] = useState(false);
   const [disliked, setDisliked] = useState(false);
-  const [started, setStarted] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const player = usePlayer();
 
-  // AUTOPLAY AUDIO: as soon as the video details load, start playing this
-  // track in the global player (the YouTube iframe below stays silent/off so
-  // there is no double audio). Clicking ANY other video/música always switches
-  // the track (that's what stops the previous one); pausing in the mini-player
-  // or on the lock screen is respected for the SAME video.
+  // AUTOPLAY: as soon as the video details load, play it in the global
+  // player (the ONE YouTube iframe docks into #ctube-player-slot above).
+  // Clicking ANY other video always switches the track (that's what stops
+  // the previous one); pausing is respected for the SAME video.
   const autoPlayDoneRef = useRef<string | null>(null);
   const queueUpdateRef = useRef(false);
   useEffect(() => {
@@ -134,6 +131,9 @@ function WatchContent() {
       return;
     }
     queueUpdateRef.current = true;
+    // Autoplay requires a user gesture in most browsers — the navigation to
+    // this page IS the gesture, and we call play synchronously right after
+    // the click before the browser resets the activation flag.
     player.playTrack(track, queue);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video, relatedVideos]);
@@ -260,7 +260,6 @@ function WatchContent() {
       if (!videoId) return;
       setLoading(true);
       setError(null);
-      setStarted(false);
 
       try {
         const [detailsData, relatedData] = await Promise.all([
@@ -369,10 +368,9 @@ function WatchContent() {
             <p className="text-[var(--muted-foreground)] mb-4">{error}</p>
             <button
               onClick={() => {
-                setError(null);
-                setLoading(true);
-                setStarted(false);
-              }}
+                  setError(null);
+                  setLoading(true);
+                }}
               className="px-4 py-2 rounded-full bg-[var(--primary)] text-white hover:opacity-90 transition-opacity"
             >
               Tentar novamente
@@ -384,49 +382,18 @@ function WatchContent() {
           <div className="flex flex-col xl:flex-row gap-6">
             {/* Main content */}
             <div className="flex-1 min-w-0">
-              {/* Player — the video preview below is silent (muted): audio
-                  comes from the global audio player, which also keeps playing
-                  with the screen locked and auto-advances the queue. Tapping
-                  play here starts the video image; the audio keeps flowing. */}
+              {/* Player — the global YouTube iframe (lib/player.tsx) docks
+                  into this slot. Audio autoplays as soon as the video is
+                  selected, and navigating away shrinks it to the floating
+                  mini-player without stopping playback. */}
               <div className="video-player-container mb-4">
-                {!started ? (
-                  <button
-                    onClick={() => setStarted(true)}
-                    className="absolute inset-0 w-full h-full group"
-                    aria-label="Reproduzir vídeo"
-                  >
-                    <Image
-                      src={`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`}
-                      alt=""
-                      fill
-                      priority
-                      unoptimized
-                      className="object-cover opacity-60 group-hover:opacity-40 transition-opacity"
-                      sizes="(max-width: 1280px) 100vw, 1200px"
-                    />
-                    <span className="absolute inset-0 flex items-center justify-center">
-                      <span className="w-20 h-20 rounded-full bg-black/60 group-hover:bg-[var(--primary)] flex items-center justify-center transition-colors">
-                        <Play className="w-9 h-9 text-white ml-1" />
-                      </span>
-                    </span>
-                    <span className="absolute bottom-3 left-3 px-3 py-1.5 rounded-lg bg-black/70 text-white text-xs font-medium">
-                      Clique para reproduzir
-                    </span>
-                  </button>
-                ) : (
-                  <iframe
-                    ref={iframeRef}
-                    src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&playsinline=1&mute=1`}
-                    title={video?.title || "Video Player"}
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                    className="w-full h-full"
-                    onError={() => {
-                      console.error("Iframe failed to load");
-                      setError("Erro ao carregar o player de vídeo.");
-                    }}
-                  />
-                )}
+                {/* The global player (VideoStage) positions itself exactly
+                    over this placeholder — never remounting the iframe. */}
+                <div
+                  id="ctube-player-slot"
+                  data-stage-slot
+                  className="absolute inset-0"
+                />
               </div>
 
               {loading ? (
