@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -40,6 +40,8 @@ import {
   openLicenseModal,
   LICENSE_ACTIVATED_EVENT,
 } from "@/lib/license-modal";
+import { usePlayer, registerOfflineAudio, type PlayerTrack } from "@/lib/player";
+import { getDownload, audioObjectUrl } from "@/lib/downloads";
 
 interface VideoDetails {
   id: string;
@@ -71,7 +73,6 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 
 function WatchContent() {
   const params = useParams();
-  const router = useRouter();
 
   // The id is read from the URL path instead of params. Online (Vercel) both
   // agree; offline, the Electron server serves the same pre-rendered shell
@@ -91,6 +92,80 @@ function WatchContent() {
   const [disliked, setDisliked] = useState(false);
   const [started, setStarted] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const player = usePlayer();
+
+  // AUTOPLAY AUDIO: as soon as the video details load, start playing this
+  // track in the global player (the YouTube iframe below stays silent/off so
+  // there is no double audio). Clicking ANY other video/música always switches
+  // the track (that's what stops the previous one); pausing in the mini-player
+  // or on the lock screen is respected for the SAME video.
+  const autoPlayDoneRef = useRef<string | null>(null);
+  const queueUpdateRef = useRef(false);
+  useEffect(() => {
+    if (!video || autoPlayDoneRef.current === video.id) return;
+    autoPlayDoneRef.current = video.id;
+    const track: PlayerTrack = {
+      videoId: video.id,
+      title: video.title,
+      channelName: video.channelName,
+      thumbnail: video.thumbnail,
+      duration: video.duration,
+    };
+    // Register offline audio if downloaded so playback works without internet.
+    void getDownload(video.id).then((entry) => {
+      if (entry) registerOfflineAudio(video.id, audioObjectUrl(entry));
+    });
+    const queue: PlayerTrack[] = [
+      track,
+      ...relatedVideos.map((rv) => ({
+        videoId: rv.id,
+        title: rv.title,
+        channelName: rv.channelName,
+        thumbnail: rv.thumbnail,
+        duration: rv.duration,
+      })),
+    ];
+    // Different video than the one playing => user tapped a new video:
+    // always switch. Same video already loaded => keep it (don't restart if
+    // the user paused it on purpose).
+    if (player.current?.videoId === video.id) {
+      // Same track already loaded — the queue refresh below keeps related
+      // videos available for auto-advance.
+      return;
+    }
+    queueUpdateRef.current = true;
+    player.playTrack(track, queue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video, relatedVideos]);
+
+  // QUEUE REFRESH: when related videos arrive AFTER autoplay started (the
+  // details effect fires first, related arrive in the same response — but if
+  // they differ, sync the queue without touching the playing track). This
+  // keeps auto-advance fluid: quando a faixa termina, toca a próxima da fila.
+  useEffect(() => {
+    if (!video || !queueUpdateRef.current || !player.current) return;
+    if (player.current.videoId !== video.id) return;
+    queueUpdateRef.current = false;
+    if (player.queue.length > relatedVideos.length) return; // nothing to add
+    const queue: PlayerTrack[] = [
+      {
+        videoId: video.id,
+        title: video.title,
+        channelName: video.channelName,
+        thumbnail: video.thumbnail,
+        duration: video.duration,
+      },
+      ...relatedVideos.map((rv) => ({
+        videoId: rv.id,
+        title: rv.title,
+        channelName: rv.channelName,
+        thumbnail: rv.thumbnail,
+        duration: rv.duration,
+      })),
+    ];
+    player.refreshQueue(queue);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video, relatedVideos, player.current]);
 
   // Offline download (audio only, license-gated)
   const [downloadState, setDownloadState] = useState<"idle" | "working" | "done" | "error">("idle");
@@ -212,19 +287,27 @@ function WatchContent() {
             duration: detailsData.video.duration,
           });
 
-          // Setup Media Session API for background playback
+          // Media Session metadata (lock screen) is set by the global player
+          // (lib/player.tsx) when the track starts — set it here too so the
+          // lock screen is correct even if audio resolution is still loading.
+          // Action handlers stay global (PlayerProvider owns them).
           if ("mediaSession" in navigator && detailsData.video) {
-            navigator.mediaSession.metadata = new MediaMetadata({
-              title: detailsData.video.title,
-              artist: detailsData.video.channelName,
-              artwork: [
-                {
-                  src: detailsData.video.thumbnail,
-                  sizes: "480x360",
-                  type: "image/jpeg",
-                },
-              ],
-            });
+            try {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: detailsData.video.title,
+                artist: detailsData.video.channelName,
+                album: "CTUBE",
+                artwork: [
+                  {
+                    src: detailsData.video.thumbnail,
+                    sizes: "480x360",
+                    type: "image/jpeg",
+                  },
+                ],
+              });
+            } catch {
+              /* ignore */
+            }
           }
         } else {
           setError("Vídeo não encontrado.");
@@ -254,57 +337,10 @@ function WatchContent() {
     return () => { cancelled = true; };
   }, [videoId, fetchWithTimeout]);
 
-  // Media Session action handlers for lock screen controls
-  useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
-
-    navigator.mediaSession.setActionHandler("play", () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"playVideo","args":""}',
-        "*"
-      );
-    });
-
-    navigator.mediaSession.setActionHandler("pause", () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"pauseVideo","args":""}',
-        "*"
-      );
-    });
-
-    navigator.mediaSession.setActionHandler("seekbackward", () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"seekBy","args":[-10]}',
-        "*"
-      );
-    });
-
-    navigator.mediaSession.setActionHandler("seekforward", () => {
-      iframeRef.current?.contentWindow?.postMessage(
-        '{"event":"command","func":"seekBy","args":[10]}',
-        "*"
-      );
-    });
-
-    navigator.mediaSession.setActionHandler("previoustrack", null);
-
-    navigator.mediaSession.setActionHandler("nexttrack", () => {
-      if (relatedVideos.length > 0) {
-        router.push(`/watch/${relatedVideos[0].id}`);
-      }
-    });
-
-    return () => {
-      if ("mediaSession" in navigator) {
-        navigator.mediaSession.setActionHandler("play", null);
-        navigator.mediaSession.setActionHandler("pause", null);
-        navigator.mediaSession.setActionHandler("seekbackward", null);
-        navigator.mediaSession.setActionHandler("seekforward", null);
-        navigator.mediaSession.setActionHandler("previoustrack", null);
-        navigator.mediaSession.setActionHandler("nexttrack", null);
-      }
-    };
-  }, [relatedVideos, router]);
+  // Media Session handlers are managed globally by the PlayerProvider
+  // (lib/player.tsx) — the audio player is what keeps playing with the screen
+  // locked, so the lock-screen controls must target the audio, not this
+  // page's (silent) YouTube iframe. Don't override them here.
 
   const handleShare = () => {
     const url = `${window.location.origin}/watch/${videoId}`;
@@ -348,8 +384,10 @@ function WatchContent() {
           <div className="flex flex-col xl:flex-row gap-6">
             {/* Main content */}
             <div className="flex-1 min-w-0">
-              {/* Player — click-to-play poster guarantees autoplay works in
-                  Electron/WebView (user gesture) and avoids silent failures. */}
+              {/* Player — the video preview below is silent (muted): audio
+                  comes from the global audio player, which also keeps playing
+                  with the screen locked and auto-advances the queue. Tapping
+                  play here starts the video image; the audio keeps flowing. */}
               <div className="video-player-container mb-4">
                 {!started ? (
                   <button
@@ -378,7 +416,7 @@ function WatchContent() {
                 ) : (
                   <iframe
                     ref={iframeRef}
-                    src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&playsinline=1`}
+                    src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&playsinline=1&mute=1`}
                     title={video?.title || "Video Player"}
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                     allowFullScreen

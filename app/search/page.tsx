@@ -53,13 +53,23 @@ function SearchContent() {
         const data = await fetchWithTimeout(url, 20000);
 
         if (cont) {
+          let added = 0;
           setVideos((prev) => {
             const ids = new Set(prev.map((v) => v.id));
             const newVideos = (data.videos || []).filter(
               (v: Video) => !ids.has(v.id)
             );
+            added = newVideos.length;
             return [...prev, ...newVideos];
           });
+          // Stop paginating when a page adds nothing new — otherwise the
+          // sentinel stays visible and the observer fires endless requests
+          // (request storm → Google rate-limit → playback failures).
+          if (added === 0) {
+            setHasMore(false);
+            setContinuation(undefined);
+            return;
+          }
         } else {
           setVideos(data.videos || []);
         }

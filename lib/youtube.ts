@@ -167,6 +167,29 @@ let homeFeedIndex = 0;
 // Server-side timeout: 12 seconds max per YouTube API call
 const YT_TIMEOUT = 12000;
 
+// --- Metadata cache -------------------------------------------------------
+// Google rate-limits InnerTube aggressively; every page view previously fired
+// several live API calls. Caching results for a few minutes (a) cuts the
+// request volume dramatically and (b) lets the app serve STALE results when
+// Google starts returning 403 ("automated queries") instead of breaking UX.
+type MetaEntry<T> = { at: number; value: T };
+const metaCache = new Map<string, MetaEntry<unknown>>();
+const META_TTL = 10 * 60 * 1000; // 10 min fresh window
+
+async function cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = metaCache.get(key) as MetaEntry<T> | undefined;
+  if (hit && Date.now() - hit.at < META_TTL) return hit.value;
+  try {
+    const value = await fn();
+    metaCache.set(key, { at: Date.now(), value });
+    return value;
+  } catch (err) {
+    // Rate-limited / transient failure: serve the stale copy if we have one.
+    if (hit) return hit.value;
+    throw err;
+  }
+}
+
 export async function getHomeFeed(
   continuationToken?: string
 ): Promise<{ videos: VideoItem[]; continuation?: string }> {
@@ -177,11 +200,12 @@ export async function getHomeFeed(
       try {
         const decoded = JSON.parse(
           Buffer.from(continuationToken, "base64").toString()
-        );
-        if (decoded.type === "home_continuation") {
-          const query = HOME_FEED_QUERIES[homeFeedIndex % HOME_FEED_QUERIES.length];
-          homeFeedIndex++;
-          const results = await withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT);
+        );          if (decoded.type === "home_continuation") {
+            const query = HOME_FEED_QUERIES[homeFeedIndex % HOME_FEED_QUERIES.length];
+            homeFeedIndex++;
+            const results = await cached(`search:${query}`, () =>
+              withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT)
+            );
           const innerSeen = new Set<string>();
           const videos = results.videos
             .map((v: unknown) => extractVideo(v))
@@ -209,7 +233,9 @@ export async function getHomeFeed(
     const query = HOME_FEED_QUERIES[homeFeedIndex % HOME_FEED_QUERIES.length];
     homeFeedIndex++;
 
-    const results = await withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT);
+    const results = await cached(`search:${query}`, () =>
+      withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT)
+    );
     const seen = new Set<string>();
     const videos = results.videos
       .map((v: unknown) => extractVideo(v))
@@ -249,7 +275,9 @@ export async function searchVideos(
         results = await withTimeout(results.getContinuation(), YT_TIMEOUT);
       }
     } else {
-      results = await withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT);
+      results = await cached(`search:${query}`, () =>
+        withTimeout(ytm.search(query, { type: "video" }), YT_TIMEOUT)
+      );
     }
 
     const seen = new Set<string>();
@@ -282,7 +310,9 @@ export async function getVideoDetails(
 ): Promise<VideoItem | null> {
   try {
     const ytm = await withTimeout(getYT(), YT_TIMEOUT);
-    const info = await withTimeout(ytm.getInfo(videoId), YT_TIMEOUT);
+    const info = await cached(`details:${videoId}`, () =>
+      withTimeout(ytm.getInfo(videoId), YT_TIMEOUT)
+    );
 
     const basicInfo = info.basic_info;
     const title = (basicInfo?.title as string) || "";
@@ -318,7 +348,9 @@ export async function getRelatedVideos(
 ): Promise<VideoItem[]> {
   try {
     const ytm = await withTimeout(getYT(), YT_TIMEOUT);
-    const info = await withTimeout(ytm.getInfo(videoId), YT_TIMEOUT);
+    const info = await cached(`related:${videoId}`, () =>
+      withTimeout(ytm.getInfo(videoId), YT_TIMEOUT)
+    );
     const videos: VideoItem[] = [];
     const seen = new Set<string>();
 
@@ -342,9 +374,8 @@ export async function getRelatedVideos(
 export async function getTrending(): Promise<VideoItem[]> {
   try {
     const ytm = await withTimeout(getYT(), YT_TIMEOUT);
-    const results = await withTimeout(
-      ytm.search("trending videos 2025", { type: "video" }),
-      YT_TIMEOUT
+    const results = await cached("trending", () =>
+      withTimeout(ytm.search("trending videos 2025", { type: "video" }), YT_TIMEOUT)
     );
     return results.videos
       .map((v: unknown) => extractVideo(v))

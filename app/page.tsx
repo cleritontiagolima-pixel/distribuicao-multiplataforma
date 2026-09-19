@@ -69,11 +69,22 @@ export default function HomePage() {
 
         const incoming = (data.videos || []) as Video[];
         if (cont) {
+          let added = 0;
           setVideos((prev) => {
             const ids = new Set(prev.map((v) => v.id));
             const newVideos = incoming.filter((v) => !ids.has(v.id));
+            added = newVideos.length;
             return [...prev, ...newVideos];
           });
+          // If a continuation page produced no new videos, the feed is
+          // effectively exhausted — stop paginating. Otherwise the sentinel
+          // stays visible and the observer fires request after request
+          // (request storm → Google rate-limit → playback failures).
+          if (added === 0) {
+            setHasMore(false);
+            setContinuation(undefined);
+            return;
+          }
         } else {
           const seen = new Set<string>();
           setVideos(
@@ -119,11 +130,19 @@ export default function HomePage() {
 
         const incoming = (data.videos || []) as Video[];
         if (cont) {
+          let added = 0;
           setVideos((prev) => {
             const ids = new Set(prev.map((v) => v.id));
             const newVideos = incoming.filter((v) => !ids.has(v.id));
+            added = newVideos.length;
             return [...prev, ...newVideos];
           });
+          // Same storm guard as loadVideos: stop when nothing new arrives.
+          if (added === 0) {
+            setHasMore(false);
+            setContinuation(undefined);
+            return;
+          }
         } else {
           const seen = new Set<string>();
           setVideos(

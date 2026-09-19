@@ -5,6 +5,7 @@ import VercelAnalytics from "./VercelAnalytics";
 import TelemetryHost from "@/components/system/TelemetryHost";
 import UpdateNotifier from "@/components/system/UpdateNotifier";
 import LicenseModal from "@/components/system/LicenseModal";
+import PlayerHost from "@/components/player/PlayerHost";
 
 export const metadata: Metadata = {
   title: "CTUBE — vídeo sem ruído",
@@ -56,7 +57,9 @@ export default function RootLayout({
       <body className="min-h-screen antialiased">
         <TelemetryHost />
         <ServiceWorkerRegister />
-        {children}
+        <PlayerHost>
+          {children}
+        </PlayerHost>
         <VercelAnalytics />
         <UpdateNotifier />
         <LicenseModal />

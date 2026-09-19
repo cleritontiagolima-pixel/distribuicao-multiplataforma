@@ -20,6 +20,8 @@ export interface AudioStream {
 }
 
 const RESOLVE_TTL = 10 * 60_000; // stream URLs expire after a few hours
+const NEG_TTL = 60_000; // failed resolutions are retried after 1 minute
+const FAILED_STREAM: AudioStream = { url: "", mimeType: "audio/mp4", size: 0, title: "" };
 const globalForDownload = globalThis as unknown as {
   __ctubeAudioStreams?: Record<string, { at: number; stream: AudioStream }>;
 };
@@ -102,7 +104,6 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
   if (hit && Date.now() - hit.at < RESOLVE_TTL) return hit.stream;
 
   const yt = await getYT();
-  let lastErr: unknown = new Error("no-audio-format");
   // Try WEB first, then retry once with the TV client: it usually returns a
   // richer set of adaptive formats even when WEB omits streaming data.
   for (const client of [undefined, "TV"] as const) {
@@ -114,10 +115,7 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
         15000
       );
       const fmt = pickAudioFormat(info);
-      if (!fmt) {
-        lastErr = new Error("no-audio-format");
-        continue;
-      }
+      if (!fmt) continue;
       const title = (info.basic_info?.title as string) || "";
       const duration = typeof info.basic_info?.duration === "number" ? info.basic_info.duration : undefined;
       const stream: AudioStream = {
@@ -129,14 +127,14 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
       };
       cache[videoId] = { at: Date.now(), stream };
       return stream;
-    } catch (err) {
-      lastErr = err;
+    } catch {
+      // Try the next client (WEB → TV); the PO-token fallback below is the
+      // last resort and reports the final error.
     }
   }
 
   // PO-token fallback (lazy: jsdom + BotGuard are heavy and only needed here).
   try {
-    const t0 = Date.now();
     const { resolveAudioWithPot } = await import("../desktop/pot-engine.mjs");
     const stream = await withTimeout(resolveAudioWithPot(yt, videoId), 30000);
     cache[videoId] = { at: Date.now(), stream };
@@ -144,8 +142,11 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[ctube] pot resolution failed for ${videoId} (${Date.now() % 100000}ms):`, msg);
-    // surface the real stage in the API error message for diagnostics
+    // Mark the failure so repeated probes don't re-run the heavy BotGuard
+    // engine every time — the negative entry expires quickly (1 min) and a
+    // later request can try again (YouTube flakiness is often transient).
     if (err instanceof Error && err.message) err.message = `pot:${msg.slice(0, 140)}`;
+    cache[videoId] = { at: Date.now() - RESOLVE_TTL + NEG_TTL, stream: FAILED_STREAM };
     throw err;
   }
 }
@@ -154,9 +155,48 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
 export async function fetchAudioRange(
   videoId: string,
   start: number,
-  end: number
-): Promise<{ buffer: ArrayBuffer; total: number }> {
+  end: number,
+  _retried = false
+): Promise<{ buffer: ArrayBuffer; total: number; mimeType: string }> {
   const stream = await resolveAudioStream(videoId);
+  if (!stream.url) {
+    // Negative-cache hit (recent resolution failed) — fail fast instead of
+    // requesting an empty googlevideo URL.
+    throw new Error("stream-unavailable");
+  }
+  try {
+    return await doRangeFetch(stream, start, end);
+  } catch (err) {
+    // A 403 from googlevideo usually means the signed URL expired (or the
+    // IP got temporarily rate-limited). Drop the cached stream and re-resolve
+    // once before giving up, so playback self-heals instead of hard-failing.
+    if (!_retried && err instanceof Error && err.message === "stream-http-403") {
+      delete getCache()[videoId];
+      const fresh = await resolveAudioStream(videoId);
+      if (fresh.url) {
+        try {
+          return await doRangeFetch(fresh, start, end);
+        } catch (retryErr) {
+          // Still 403 (transient IP rate-limit): wait briefly and try one
+          // final time before surfacing the failure to the player.
+          if (retryErr instanceof Error && retryErr.message === "stream-http-403") {
+            await new Promise((r) => setTimeout(r, 2500));
+            const again = await resolveAudioStream(videoId);
+            if (again.url) return doRangeFetch(again, start, end);
+          }
+          throw retryErr;
+        }
+      }
+    }
+    throw err;
+  }
+}
+
+async function doRangeFetch(
+  stream: AudioStream,
+  start: number,
+  end: number
+): Promise<{ buffer: ArrayBuffer; total: number; mimeType: string }> {
   const total = stream.size || end + 1;
   const safeEnd = Math.min(end, Math.max(total - 1, start));
 
@@ -172,11 +212,11 @@ export async function fetchAudioRange(
   );
   // 416 = range past the end of the stream → treat as "done" (empty buffer).
   if (res.status === 416) {
-    return { buffer: new ArrayBuffer(0), total };
+    return { buffer: new ArrayBuffer(0), total, mimeType: stream.mimeType || "audio/mp4" };
   }
   if (!res.ok && res.status !== 206) {
     throw new Error(`stream-http-${res.status}`);
   }
   const buffer = await res.arrayBuffer();
-  return { buffer, total };
+  return { buffer, total, mimeType: stream.mimeType || "audio/mp4" };
 }
