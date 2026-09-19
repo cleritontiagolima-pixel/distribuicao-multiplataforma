@@ -46,7 +46,9 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: android-actions/setup-android@v3
+      # NOTE: android-actions/setup-android@v3 was removed — its sdkmanager now
+      # fails on the retired 'tools' package and the ubuntu-latest runner
+      # already ships a complete Android SDK (ANDROID_HOME is preset).
       - name: Build Android APK
         run: |
           cd android

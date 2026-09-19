@@ -51,7 +51,8 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: android-actions/setup-android@v3
+      # NOTE: setup-android@v3 removed — sdkmanager fails on the retired
+      # 'tools' package; the runner already ships a complete Android SDK.
       - name: Build release AAB
         run: cd android && ./gradlew bundleRelease --stacktrace --no-daemon --console=plain
       - name: Upload AAB to Google Play (internal track)
