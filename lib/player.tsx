@@ -16,12 +16,17 @@
 // Autoplay: selecting a video calls playTrack() → loadVideoById (plays
 // immediately). When a track ends, the next one in the queue auto-plays.
 //
-// Lock screen (native apps): when the app goes to background, the current
-// video is handed off to a hidden <audio> element resolved from the DEVICE
-// IP (residential/mobile IPs are accepted by googlevideo) with MediaSession
-// metadata, so audio keeps playing with the screen locked. When the app
-// comes back, playback returns to the video at the same position.
+// Auto-advance (YouTube behavior): when a track ends, the next one starts
+// AND the app navigates to its /watch page, so the player STAYS DOCKED in
+// place — it only shrinks to the mini-player when the USER navigates away.
+//
+// Lock screen (native apps): the device-resolved audio stream is prefetched
+// WHILE the video plays in the foreground. When the screen locks, the swap
+// to the hidden <audio> element is instant (URL already cached), so the
+// WebView suspension never interrupts the sound. The queue also keeps
+// advancing on the audio element with the screen locked.
 
+import { useRouter } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -137,6 +142,7 @@ const YT_PAUSED = 2;
 const YT_BUFFERING = 3;
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const [state, setState] = useState<PlayerState>({
     current: null,
     queue: [],
@@ -160,6 +166,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const pendingRef = useRef<PlayerTrack | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const backgroundAudioRef = useRef(false);
+  // Device-resolved audio streams prefetched while playing in the foreground
+  // (lock-screen handoff must be instant — no network when the screen locks).
+  const streamCacheRef = useRef<Map<string, string>>(new Map());
+  const prefetchingRef = useRef<Set<string>>(new Set());
 
   // ------------------------------ Media Session ------------------------------
   const updateMediaSession = useCallback((track: PlayerTrack) => {
@@ -233,6 +243,44 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       });
   }, []);
 
+  // --------------------------- Stream prefetch -------------------------------
+  // Native apps: resolve the audio stream from the DEVICE IP ahead of time so
+  // locking the screen swaps playback instantly (see visibilitychange below).
+  const prefetchStream = useCallback((track: PlayerTrack) => {
+    if (!track) return;
+    if (!isNativeApp()) return;
+    if (offlineUrls[track.videoId]) return;
+    if (streamCacheRef.current.has(track.videoId)) return;
+    if (prefetchingRef.current.has(track.videoId)) return;
+    prefetchingRef.current.add(track.videoId);
+    void (async () => {
+      try {
+        const license = getStoredLicense();
+        const potData = await fetchPotForDevice(track.videoId, license);
+        const stream = await resolveAudioFromDevice(track.videoId, potData, license);
+        if (stream.url) {
+          if (streamCacheRef.current.size >= 5) {
+            const oldest = streamCacheRef.current.keys().next();
+            if (oldest.value !== undefined) streamCacheRef.current.delete(oldest.value);
+          }
+          streamCacheRef.current.set(track.videoId, stream.url);
+        }
+      } catch {
+        /* prefetch is best-effort — the visibilitychange fallback retries */
+      } finally {
+        prefetchingRef.current.delete(track.videoId);
+      }
+    })();
+  }, []);
+
+  // Prefetch the current track (and the next one) whenever the track changes.
+  useEffect(() => {
+    if (!state.current || state.offline) return;
+    prefetchStream(state.current);
+    const nxt = state.queue[state.index + 1];
+    if (nxt) prefetchStream(nxt);
+  }, [state.current, state.index, state.queue, prefetchStream]);
+
   // ------------------------------ Track control ------------------------------
   const loadTrack = useCallback(
     (track: PlayerTrack) => {
@@ -247,6 +295,41 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           audio.currentTime = 0;
           void audio.play().catch(() => undefined);
         }
+        return;
+      }
+      // Screen locked (background audio active): keep playing on the hidden
+      // <audio> element — never touch the hidden iframe while backgrounded.
+      if (backgroundAudioRef.current) {
+        const audio = audioRef.current;
+        setState((s) => ({ ...s, loading: true }));
+        void (async () => {
+          try {
+            let url = streamCacheRef.current.get(track.videoId);
+            if (!url) {
+              const license = getStoredLicense();
+              const potData = await fetchPotForDevice(track.videoId, license);
+              const stream = await resolveAudioFromDevice(track.videoId, potData, license);
+              url = stream.url;
+              if (url) streamCacheRef.current.set(track.videoId, url);
+            }
+            if (!audio) return;
+            audio.src = url;
+            audio.currentTime = 0;
+            await audio.play();
+          } catch {
+            // Could not resolve: fall back to the iframe path (screen-on case).
+            backgroundAudioRef.current = false;
+            setState((p) => ({ ...p, backgroundAudio: false }));
+            const p = playerRef.current;
+            if (p) {
+              try {
+                p.loadVideoById(track.videoId);
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        })();
         return;
       }
       const p = playerRef.current;
@@ -283,6 +366,34 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     playIndexRef.current = playIndex;
   }, [playIndex]);
+
+  // AUTO-ADVANCE (YouTube behavior): start the next track AND navigate to its
+  // /watch page, so the player stays DOCKED in place — it only shrinks to the
+  // mini-player when the USER browses away. While background audio is active
+  // (screen locked) we never navigate.
+  const advanceRef = useRef<(index: number) => void>(() => {});
+  const advance = useCallback(
+    (index: number) => {
+      const s = stateRef.current;
+      if (index < 0 || index >= s.queue.length) {
+        setState((p) => ({ ...p, playing: false }));
+        return;
+      }
+      const track = s.queue[index];
+      playIndexRef.current(index);
+      if (!s.backgroundAudio && !s.offline && track) {
+        try {
+          router.push(`/watch/${track.videoId}`);
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    [router]
+  );
+  useEffect(() => {
+    advanceRef.current = advance;
+  }, [advance]);
 
   const playTrack = useCallback(
     (track: PlayerTrack, queue?: PlayerTrack[]) => {
@@ -342,11 +453,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       } else if (data === YT_BUFFERING) {
         setState((s) => ({ ...s, loading: true }));
       } else if (data === YT_ENDED) {
-        // AUTO-ADVANCE: play the next track in the queue.
+        // AUTO-ADVANCE: play the next track and navigate to its watch page
+        // (player stays docked — YouTube behavior).
         const s = stateRef.current;
         const nextIdx = s.index + 1;
         if (nextIdx < s.queue.length) {
-          playIndexRef.current(nextIdx);
+          advanceRef.current(nextIdx);
         } else {
           setState((p) => ({ ...p, playing: false }));
         }
@@ -371,7 +483,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         playing: false,
         error: nextIdx < s.queue.length ? null : "audio-error",
       }));
-      if (nextIdx < s.queue.length) playIndexRef.current(nextIdx);
+      if (nextIdx < s.queue.length) advanceRef.current(nextIdx);
     };
   }, [hasCurrent]);
 
@@ -410,7 +522,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const next = useCallback(() => {
-    playIndexRef.current(stateRef.current.index + 1);
+    advanceRef.current(stateRef.current.index + 1);
   }, []);
 
   const previous = useCallback(() => {
@@ -427,7 +539,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         return;
       }
     }
-    playIndexRef.current(s.index - 1);
+    advanceRef.current(s.index - 1);
   }, []);
 
   const seek = useCallback((seconds: number) => {
@@ -530,6 +642,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       if (nextIdx < s.queue.length) playIndexRef.current(nextIdx);
       else setState((p) => ({ ...p, playing: false }));
     };
+    // (Audio auto-advance keeps playing on the audio element — no navigation,
+    // so the queue flows even with the screen locked.)
     const onWaiting = () => setState((s) => ({ ...s, loading: true }));
     const onLoaded = () =>
       setState((s) => ({ ...s, duration: audioElement.duration || s.duration }));
@@ -578,36 +692,58 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   // ------------------------- Lock-screen handoff -----------------------------
   // Native apps only: when the screen locks / app goes background, move the
-  // sound into a device-resolved <audio> stream so it keeps playing.
+  // sound into the device-resolved <audio> stream. The stream URL is usually
+  // ALREADY cached (prefetch above), so the swap happens instantly — before
+  // the OS suspends the WebView. If not cached yet, resolve asynchronously
+  // as a fallback.
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const onVisibility = async () => {
+    const onVisibility = () => {
       if (!isNativeApp()) return;
       const s = stateRef.current;
       if (document.visibilityState === "hidden") {
         if (!s.current || !s.playing || s.offline || backgroundAudioRef.current) return;
-        try {
-          const license = getStoredLicense();
-          const potData = await fetchPotForDevice(s.current.videoId, license);
-          const stream = await resolveAudioFromDevice(s.current.videoId, potData, license);
-          if (!stream.url) return;
+        const handoff = async (url: string) => {
           const audio = audioRef.current;
-          if (!audio) return;
-          const videoPos = playerRef.current?.getCurrentTime?.() || 0;
-          audio.src = stream.url;
-          audio.currentTime = videoPos;
-          await audio.play();
+          if (!audio || backgroundAudioRef.current) return;
           try {
-            playerRef.current?.pauseVideo();
+            const videoPos = playerRef.current?.getCurrentTime?.() || 0;
+            audio.src = url;
+            audio.currentTime = videoPos;
+            await audio.play();
+            try {
+              playerRef.current?.pauseVideo();
+            } catch {
+              /* ignore */
+            }
+            backgroundAudioRef.current = true;
+            setState((p) => ({ ...p, backgroundAudio: true }));
           } catch {
-            /* ignore */
+            /* play() while hidden refused — video path continues */
           }
-          backgroundAudioRef.current = true;
-          setState((p) => ({ ...p, backgroundAudio: true }));
-        } catch {
-          // No license / resolution failed: video playback path continues
-          // (WebView may throttle, but nothing breaks).
+        };
+        const videoId = s.current.videoId;
+        const cached = streamCacheRef.current.get(videoId);
+        if (cached) {
+          // Instant swap — no network needed.
+          void handoff(cached);
+          return;
         }
+        // Fallback: resolve now (also warms the cache for next time).
+        void (async () => {
+          try {
+            const license = getStoredLicense();
+            const potData = await fetchPotForDevice(videoId, license);
+            const stream = await resolveAudioFromDevice(videoId, potData, license);
+            if (stream.url) {
+              streamCacheRef.current.set(videoId, stream.url);
+              await handoff(stream.url);
+            }
+          } catch {
+            // Resolution failed: video playback path continues
+            // (WebView may throttle, but nothing breaks).
+          }
+        })();
       } else if (backgroundAudioRef.current) {
         const audio = audioRef.current;
         const pos = audio?.currentTime || 0;

@@ -31,7 +31,14 @@ export default function VideoStage() {
 
   const [slotRect, setSlotRect] = useState<Rect | null>(null);
 
-  const isOnCurrentWatch = !!current && pathname === `/watch/${current.videoId}`;
+  const isOnCurrentWatch =
+    !!current &&
+    (pathname === `/watch/${current.videoId}` ||
+      // Mobile: when a track auto-advances, the router briefly serves the OLD
+      // watch page for the new id (the [id] component re-renders in place).
+      // Any /watch/* page keeps the player docked — an exact match only adds
+      // a fraction-of-a-second flicker to the mini-player between tracks.
+      (/^\/watch\//.test(pathname) && !player.backgroundAudio));
 
   // Track the slot's position while docked (follows scroll/resize/layout).
   useEffect(() => {

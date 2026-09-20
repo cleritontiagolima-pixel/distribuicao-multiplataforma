@@ -164,6 +164,8 @@ export async function fetchPotForDevice(
   videoId: string,
   license?: { code: string; email: string } | null
 ): Promise<DevicePotData> {
+  // The pot endpoint serves PLAYBACK (free): the license params are accepted
+  // but optional — offline DOWNLOADS are gated elsewhere (download/url, chunk).
   const params = new URLSearchParams({ videoId });
   if (license) {
     params.set("code", license.code);

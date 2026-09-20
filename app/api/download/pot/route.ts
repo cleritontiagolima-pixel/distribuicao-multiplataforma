@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { validateLicenseCode } from "@/lib/server-crypto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,25 +12,43 @@ export const maxDuration = 60;
 // browsers/WebViews can't run) and hands it to the native app, which then
 // makes its own player request from the device IP (no CORS in Capacitor when
 // using the native HTTP bridge).
+//
+// IMPORTANT: this token is used for PLAYBACK (including the lock-screen audio
+// handoff) and stays FREE — the annual license only gates offline DOWNLOADS
+// (see /api/download/url and /api/download/chunk, which still validate it).
+// Simple in-memory rate limit keeps the endpoint from being abused.
+
+// Per-instance rate limit: 40 mints / minute / IP.
+const globalForPot = globalThis as unknown as {
+  __ctubePotHits?: Map<string, number[]>;
+};
+const hits = (globalForPot.__ctubePotHits ??= new Map<string, number[]>());
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const list = (hits.get(ip) || []).filter((t) => now - t < 60_000);
+  list.push(now);
+  hits.set(ip, list);
+  return list.length > 40;
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const videoId = (searchParams.get("videoId") || "").trim();
-  const code = (searchParams.get("code") || "").trim();
-  const email = (searchParams.get("email") || "").trim();
 
   if (!/^[A-Za-z0-9_-]{6,}$/.test(videoId)) {
     return NextResponse.json({ ok: false, error: "invalid-video" }, { status: 400 });
   }
 
   const plan = process.env.CTUBE_PLAN === "paid" ? "paid" : "free";
-  if (plan === "paid") {
-    const result = validateLicenseCode(code, email || undefined);
-    if (!result.valid || !result.payload) {
-      return NextResponse.json(
-        { ok: false, error: "license-required", reason: result.reason || "invalid" },
-        { status: 403 }
-      );
-    }
+
+  // Playback pot is free (no license). Rate limit per IP only.
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
+  if (rateLimited(ip)) {
+    return NextResponse.json(
+      { ok: false, error: "rate-limited" },
+      { status: 429 }
+    );
   }
 
   try {
