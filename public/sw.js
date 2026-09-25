@@ -8,7 +8,17 @@ const STATIC_ASSETS = ["/", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
+    caches
+      .open(CACHE_NAME)
+      .then((cache) =>
+        // Cache each asset independently: one transient failure (deploy in
+        // progress) must not abort the whole install and leave the SW broken.
+        Promise.allSettled(
+          STATIC_ASSETS.map((asset) =>
+            cache.add(new Request(asset, { cache: "reload" }))
+          )
+        )
+      )
   );
   self.skipWaiting();
 });
@@ -75,11 +85,16 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets and other same-origin GETs: cache-first
+  // Static assets and other same-origin GETs: cache-first.
+  // respondWith NEVER rejects: offline + nothing cached resolves with an
+  // empty 503 (a rejected promise here surfaces as "Uncaught TypeError:
+  // Failed to fetch at sw.js").
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    (async () => {
+      const cached = await caches.match(event.request);
       if (cached) return cached;
-      return fetch(event.request).then((response) => {
+      try {
+        const response = await fetch(event.request);
         // Only cache successful responses
         if (!response || response.status !== 200) {
           return response;
@@ -126,7 +141,15 @@ self.addEventListener("fetch", (event) => {
         }
 
         return response;
-      });
-    })
+      } catch {
+        // Network failed and nothing cached: resolve with an empty 503
+        // instead of rejecting (never an uncaught TypeError).
+        return new Response("", {
+          status: 503,
+          statusText: "Offline",
+          headers: { "Cache-Control": "no-store" },
+        });
+      }
+    })()
   );
 });

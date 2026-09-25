@@ -76,6 +76,38 @@ function openDB(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+/**
+ * Fixes the classic "streamed MP4 has duration=Infinity → seek is blocked"
+ * problem on downloaded audio (Safari/iOS and some Android WebViews).
+ *
+ * The audio saved by CTUBE is a stream-ordered MP4 (metadata at the end), so
+ * the player element reports duration = Infinity until the whole file is
+ * parsed and REFUSES to seek. Loading the element and forcing it to reach the
+ * end once makes the browser compute the real duration, re-enabling
+ * seek/scrub on the SAME element (all platforms). Safe to call on every
+ * mount: it no-ops when the duration is already finite.
+ */
+export function fixAudioSeekability(audio: HTMLAudioElement): void {
+  if (
+    Number.isFinite(audio.duration) ||
+    audio.readyState < HTMLMediaElement.HAVE_METADATA
+  ) {
+    return;
+  }
+  const onTimeUpdate = () => {
+    audio.removeEventListener("timeupdate", onTimeUpdate);
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      audio.currentTime = 0; // volta ao início, agora com seek liberado
+    }
+  };
+  audio.addEventListener("timeupdate", onTimeUpdate);
+  try {
+    audio.currentTime = 1e101; // pula para "o fim" → força calcular a duração
+  } catch {
+    audio.removeEventListener("timeupdate", onTimeUpdate);
+  }
+}
+
 function idbRequest<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);

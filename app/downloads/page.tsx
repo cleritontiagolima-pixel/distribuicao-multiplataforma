@@ -18,6 +18,7 @@ import {
   removeDownload,
   audioObjectUrl,
   hasDownloadEntitlement,
+  fixAudioSeekability,
   type DownloadedAudio,
 } from "@/lib/downloads";
 import {
@@ -299,6 +300,9 @@ export default function DownloadsPage() {
                   controls
                   preload="metadata"
                   src={urls[item.videoId]}
+                  onLoadedMetadata={(e) =>
+                    fixAudioSeekability(e.currentTarget)
+                  }
                   className="w-full h-9"
                   style={{ accentColor: "var(--primary)" }}
                 />

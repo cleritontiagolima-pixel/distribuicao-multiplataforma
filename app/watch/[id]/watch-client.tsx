@@ -42,6 +42,7 @@ import {
 } from "@/lib/license-modal";
 import { usePlayer, registerOfflineAudio, type PlayerTrack } from "@/lib/player";
 import { getDownload, audioObjectUrl } from "@/lib/downloads";
+import DockedControls from "@/components/player/DockedControls";
 
 interface VideoDetails {
   id: string;
@@ -252,9 +253,28 @@ function WatchContent() {
     await startDownload(source);
   }, [video, startDownload]);
 
-  // Load video details and related videos
+  // Load video details and related videos. Details and related are loaded
+  // INDEPENDENTLY: a related-feed failure (timeout, upstream 5xx) used to
+  // reject Promise.all and blank the whole page even though the video was
+  // playable. Now the video always plays; related simply stays empty.
   useEffect(() => {
     let cancelled = false;
+
+    async function loadRelated(vid: string) {
+      try {
+        const data = await fetchWithTimeout(`/api/videos/${vid}?type=related`, 25000);
+        if (cancelled) return;
+        setRelatedVideos(
+          (data.videos || []).map((v: VideoDetails) => ({
+            ...v,
+            thumbnail:
+              v.thumbnail || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+          }))
+        );
+      } catch {
+        if (!cancelled) setRelatedVideos([]); // related é acessório — nunca derruba a página
+      }
+    }
 
     async function loadVideo() {
       if (!videoId) return;
@@ -262,11 +282,7 @@ function WatchContent() {
       setError(null);
 
       try {
-        const [detailsData, relatedData] = await Promise.all([
-          fetchWithTimeout(`/api/videos/${videoId}`, 25000),
-          fetchWithTimeout(`/api/videos/${videoId}?type=related`, 25000),
-        ]);
-
+        const detailsData = await fetchWithTimeout(`/api/videos/${videoId}`, 25000);
         if (cancelled) return;
 
         if (detailsData.video) {
@@ -312,13 +328,8 @@ function WatchContent() {
           setError("Vídeo não encontrado.");
         }
 
-        setRelatedVideos(
-          (relatedData.videos || []).map((v: VideoDetails) => ({
-            ...v,
-            thumbnail:
-              v.thumbnail || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
-          }))
-        );
+        setRelatedVideos([]);
+        void loadRelated(videoId);
       } catch (err) {
         if (cancelled) return;
         console.error("Error loading video:", err);
@@ -395,6 +406,11 @@ function WatchContent() {
                   className="absolute inset-0"
                 />
               </div>
+
+              {/* Playback controls docked under the video: play/pause,
+                  ±10s, prev/next and a seekable progress bar — all driving
+                  the global player iframe. */}
+              <DockedControls />
 
               {loading ? (
                 <div className="space-y-4">

@@ -316,9 +316,13 @@ export async function getVideoDetails(
 
     const basicInfo = info.basic_info;
     const title = (basicInfo?.title as string) || "";
+    // Prefer the LAST (largest) thumbnail YouTube returns. Never fall back to
+    // maxresdefault.jpg: most low-res/older videos don't have one and it 404s
+    // (console noise + broken tiles). hqdefault.jpg always exists.
+    const thumbList = (basicInfo?.thumbnail as { url?: string }[] | undefined) || [];
     const thumbnail =
-      basicInfo?.thumbnail?.[0]?.url ||
-      `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+      thumbList[thumbList.length - 1]?.url ||
+      `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
     const channelName =
       (basicInfo?.author as string) || basicInfo?.channel?.name || "";
     const channelId = basicInfo?.channel?.id || basicInfo?.channel_id;
