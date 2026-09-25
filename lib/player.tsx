@@ -52,6 +52,8 @@ export interface PlayerTrack {
   duration?: string;
 }
 
+export type RepeatMode = "off" | "all" | "one";
+
 interface PlayerState {
   current: PlayerTrack | null;
   queue: PlayerTrack[];
@@ -63,6 +65,8 @@ interface PlayerState {
   error: string | null;
   offline: boolean; // playing a locally downloaded audio (no video)
   backgroundAudio: boolean; // audio handoff active (screen locked)
+  repeat: RepeatMode; // queue auto-advance mode
+  shuffle: boolean; // shuffled queue order
 }
 
 interface PlayerApi extends PlayerState {
@@ -70,6 +74,10 @@ interface PlayerApi extends PlayerState {
   playTrack: (track: PlayerTrack, queue?: PlayerTrack[]) => void;
   /** Replace the queue without interrupting the current track. */
   refreshQueue: (queue: PlayerTrack[]) => void;
+  /** Cycle repeat mode: off → all → one. */
+  cycleRepeat: () => void;
+  /** Toggle shuffled queue order (current track stays first). */
+  toggleShuffle: () => void;
   toggle: () => void;
   pause: () => void;
   next: () => void;
@@ -154,6 +162,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     error: null,
     offline: false,
     backgroundAudio: false,
+    repeat: "off",
+    shuffle: false,
   });
   const stateRef = useRef(state);
   useEffect(() => {
@@ -430,6 +440,76 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // ------------------------- Repeat / shuffle prefs --------------------------
+  // Read by the playback handlers through refs (they must see the latest
+  // value without re-subscribing) and persisted so the preference survives
+  // reloads.
+  const repeatRef = useRef<RepeatMode>("off");
+  const shuffleRef = useRef(false);
+  const unshuffledRef = useRef<PlayerTrack[] | null>(null);
+  useEffect(() => {
+    try {
+      const r = localStorage.getItem("ctube:repeat");
+      if (r === "all" || r === "one") {
+        repeatRef.current = r;
+        setState((s) => ({ ...s, repeat: r }));
+      }
+      if (localStorage.getItem("ctube:shuffle") === "1") {
+        shuffleRef.current = true;
+        setState((s) => ({ ...s, shuffle: true }));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const cycleRepeat = useCallback(() => {
+    const order: RepeatMode[] = ["off", "all", "one"];
+    const mode = order[(order.indexOf(repeatRef.current) + 1) % order.length];
+    repeatRef.current = mode;
+    try {
+      localStorage.setItem("ctube:repeat", mode);
+    } catch {
+      /* ignore */
+    }
+    setState((s) => ({ ...s, repeat: mode }));
+  }, []);
+  const toggleShuffle = useCallback(() => {
+    const on = !shuffleRef.current;
+    shuffleRef.current = on;
+    try {
+      localStorage.setItem("ctube:shuffle", on ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+    setState((s) => {
+      if (!on) {
+        // Shuffle off: restore the pre-shuffle order, keeping the current
+        // track in place (playback is never interrupted).
+        const saved = unshuffledRef.current;
+        unshuffledRef.current = null;
+        const cur = s.queue[s.index] ?? s.current;
+        if (saved && cur) {
+          const idx = saved.findIndex((t) => t.videoId === cur.videoId);
+          if (idx >= 0) return { ...s, shuffle: on, queue: saved, index: idx };
+        }
+        return { ...s, shuffle: on };
+      }
+      if (s.queue.length < 2) return { ...s, shuffle: on };
+      // Shuffle the remaining tracks, keeping the current one first so the
+      // auto-advance order changes without interrupting playback. The
+      // original order is kept so shuffle-off can restore it.
+      unshuffledRef.current = s.queue;
+      const cur = s.queue[s.index];
+      const rest = s.queue.filter((t) => t !== cur);
+      for (let i = rest.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [rest[i], rest[j]] = [rest[j], rest[i]];
+      }
+      const queue = cur ? [cur, ...rest] : rest;
+      return { ...s, shuffle: on, queue, index: cur ? 0 : s.index };
+    });
+  }, []);
+
   const registerStage = useCallback(
     (el: HTMLDivElement | null) => {
       if (!el) return;
@@ -454,13 +534,31 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         setState((s) => ({ ...s, loading: true }));
       } else if (data === YT_ENDED) {
         // AUTO-ADVANCE: play the next track and navigate to its watch page
-        // (player stays docked — YouTube behavior).
+        // (player stays docked — YouTube behavior). Repeat "one" restarts
+        // the track; repeat "all" wraps to the queue start.
         const s = stateRef.current;
-        const nextIdx = s.index + 1;
-        if (nextIdx < s.queue.length) {
-          advanceRef.current(nextIdx);
+        if (repeatRef.current === "one") {
+          const p = playerRef.current;
+          try {
+            p?.seekTo(0, true);
+            p?.playVideo();
+          } catch {
+            /* ignore */
+          }
         } else {
-          setState((p) => ({ ...p, playing: false }));
+          let nextIdx = s.index + 1;
+          if (
+            nextIdx >= s.queue.length &&
+            repeatRef.current === "all" &&
+            s.queue.length > 0
+          ) {
+            nextIdx = 0;
+          }
+          if (nextIdx < s.queue.length) {
+            advanceRef.current(nextIdx);
+          } else {
+            setState((p) => ({ ...p, playing: false }));
+          }
         }
       }
       if ("mediaSession" in navigator) {
@@ -522,7 +620,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const next = useCallback(() => {
-    advanceRef.current(stateRef.current.index + 1);
+    const s = stateRef.current;
+    let idx = s.index + 1;
+    // Manual skip at the end of the queue wraps when repeat-all is active.
+    if (idx >= s.queue.length && repeatRef.current === "all" && s.queue.length > 0) {
+      idx = 0;
+    }
+    advanceRef.current(idx);
   }, []);
 
   const previous = useCallback(() => {
@@ -538,6 +642,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         audio.currentTime = 0;
         return;
       }
+    }
+    // Wrap to the last track when repeat-all is active.
+    if (s.index - 1 < 0 && repeatRef.current === "all" && s.queue.length > 0) {
+      advanceRef.current(s.queue.length - 1);
+      return;
     }
     advanceRef.current(s.index - 1);
   }, []);
@@ -594,6 +703,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       error: null,
       offline: false,
       backgroundAudio: false,
+      repeat: repeatRef.current,
+      shuffle: shuffleRef.current,
     });
   }, []);
 
@@ -638,7 +749,22 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       }));
     const onEnded = () => {
       const s = stateRef.current;
-      const nextIdx = s.index + 1;
+      if (repeatRef.current === "one") {
+        const audio = audioRef.current;
+        if (audio) {
+          audio.currentTime = 0;
+          void audio.play().catch(() => undefined);
+        }
+        return;
+      }
+      let nextIdx = s.index + 1;
+      if (
+        nextIdx >= s.queue.length &&
+        repeatRef.current === "all" &&
+        s.queue.length > 0
+      ) {
+        nextIdx = 0;
+      }
       if (nextIdx < s.queue.length) playIndexRef.current(nextIdx);
       else setState((p) => ({ ...p, playing: false }));
     };
@@ -801,6 +927,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       ...state,
       playTrack,
       refreshQueue,
+      cycleRepeat,
+      toggleShuffle,
       toggle,
       pause,
       next,
@@ -809,7 +937,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       close,
       registerStage,
     }),
-    [state, playTrack, refreshQueue, toggle, pause, next, previous, seek, close, registerStage]
+    [
+      state,
+      playTrack,
+      refreshQueue,
+      cycleRepeat,
+      toggleShuffle,
+      toggle,
+      pause,
+      next,
+      previous,
+      seek,
+      close,
+      registerStage,
+    ]
   );
 
   return (

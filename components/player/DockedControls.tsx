@@ -5,7 +5,18 @@
 // Drives the global player (lib/player.tsx) — the ONE YouTube iframe —
 // so it works identically on desktop (Electron) and mobile (WebView).
 
-import { Play, Pause, RotateCcw, RotateCw, SkipForward, SkipBack, Loader2 } from "lucide-react";
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  RotateCw,
+  SkipForward,
+  SkipBack,
+  Repeat,
+  Repeat1,
+  Shuffle,
+  Loader2,
+} from "lucide-react";
 import { usePlayer } from "@/lib/player";
 import { useRouter } from "next/navigation";
 
@@ -19,7 +30,18 @@ function fmt(sec: number): string {
 export default function DockedControls() {
   const router = useRouter();
   const player = usePlayer();
-  const { current, playing, loading, position, duration, queue, index, offline } = player;
+  const {
+    current,
+    playing,
+    loading,
+    position,
+    duration,
+    queue,
+    index,
+    offline,
+    repeat,
+    shuffle,
+  } = player;
 
   if (!current) return null;
 
@@ -62,6 +84,46 @@ export default function DockedControls() {
         </span>
 
         <div className="flex items-center gap-1">
+          <button
+            onClick={player.cycleRepeat}
+            className={
+              "p-2 rounded-full hover:bg-[var(--secondary)] transition-colors " +
+              (repeat !== "off" ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]")
+            }
+            title={
+              repeat === "off"
+                ? "Repetir: desligado"
+                : repeat === "all"
+                  ? "Repetir: fila inteira"
+                  : "Repetir: esta faixa"
+            }
+            aria-label={
+              repeat === "off"
+                ? "Repetir desligado"
+                : repeat === "all"
+                  ? "Repetir fila inteira ativado"
+                  : "Repetir faixa atual ativado"
+            }
+          >
+            {repeat === "one" ? (
+              <Repeat1 className="w-4 h-4" />
+            ) : (
+              <Repeat className="w-4 h-4" />
+            )}
+          </button>
+          {many && (
+            <button
+              onClick={player.toggleShuffle}
+              className={
+                "p-2 rounded-full hover:bg-[var(--secondary)] transition-colors " +
+                (shuffle ? "text-[var(--primary)]" : "text-[var(--muted-foreground)]")
+              }
+              title={shuffle ? "Aleatório: ligado" : "Aleatório: desligado"}
+              aria-label={shuffle ? "Ordem aleatória ativada" : "Ativar ordem aleatória"}
+            >
+              <Shuffle className="w-4 h-4" />
+            </button>
+          )}
           {many && (
             <button
               onClick={player.previous}
@@ -121,6 +183,7 @@ export default function DockedControls() {
 
       {many && (
         <p className="text-[11px] text-[var(--muted-foreground)] mt-2 text-center">
+          {shuffle && "aleatório • "}
           {index + 1} de {queue.length} na fila
           {queue[index + 1] && (
             <>

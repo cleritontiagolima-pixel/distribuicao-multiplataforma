@@ -8,7 +8,17 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { Music2, Play, Pause, Trash2, ListMusic, Loader2 } from "lucide-react";
+import {
+  Music2,
+  Play,
+  Pause,
+  Trash2,
+  ListMusic,
+  Loader2,
+  Repeat,
+  Repeat1,
+  Shuffle,
+} from "lucide-react";
 import AppShell from "@/components/layout/AppShell";
 import DockedControls from "@/components/player/DockedControls";
 import {
@@ -104,13 +114,59 @@ export default function MusicPage() {
             </div>
           </div>
           {items.length > 0 && (
-            <button
-              onClick={() => playAll(0)}
-              className="flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-            >
-              <ListMusic className="w-4 h-4" />
-              Tocar tudo
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={player.cycleRepeat}
+                className={
+                  "p-2.5 rounded-full border transition-colors " +
+                  (player.repeat !== "off"
+                    ? "border-[var(--primary)] text-[var(--primary)] bg-[var(--secondary)]"
+                    : "border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--secondary)]")
+                }
+                title={
+                  player.repeat === "off"
+                    ? "Repetir: desligado"
+                    : player.repeat === "all"
+                      ? "Repetir: fila inteira"
+                      : "Repetir: esta faixa"
+                }
+                aria-label={
+                  player.repeat === "off"
+                    ? "Repetir desligado"
+                    : player.repeat === "all"
+                      ? "Repetir fila inteira ativado"
+                      : "Repetir faixa atual ativado"
+                }
+              >
+                {player.repeat === "one" ? (
+                  <Repeat1 className="w-4 h-4" />
+                ) : (
+                  <Repeat className="w-4 h-4" />
+                )}
+              </button>
+              <button
+                onClick={player.toggleShuffle}
+                className={
+                  "p-2.5 rounded-full border transition-colors " +
+                  (player.shuffle
+                    ? "border-[var(--primary)] text-[var(--primary)] bg-[var(--secondary)]"
+                    : "border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--secondary)]")
+                }
+                title={player.shuffle ? "Aleatório: ligado" : "Aleatório: desligado"}
+                aria-label={
+                  player.shuffle ? "Ordem aleatória ativada" : "Ativar ordem aleatória"
+                }
+              >
+                <Shuffle className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => playAll(0)}
+                className="flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+              >
+                <ListMusic className="w-4 h-4" />
+                Tocar tudo
+              </button>
+            </div>
           )}
         </div>
 

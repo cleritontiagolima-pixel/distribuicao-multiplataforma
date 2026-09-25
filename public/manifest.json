@@ -9,6 +9,8 @@
   "display_override": ["standalone", "minimal-ui"],
   "background_color": "#0f0f0f",
   "theme_color": "#0f0f0f",
+  "lang": "pt-BR",
+  "dir": "ltr",
   "orientation": "any",
   "handle_links": "preferred",
   "categories": ["entertainment", "video"],
@@ -41,15 +43,6 @@
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml"
-    }
-  ],
-  "screenshots": [
-    {
-      "src": "/ctube-logo.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "form_factor": "wide",
-      "label": "CTUBE - Player de vídeo"
     }
   ],
   "shortcuts": [

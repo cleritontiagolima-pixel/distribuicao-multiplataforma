@@ -3,8 +3,16 @@
 // - Page navigations: network-only (never cache navigations to avoid stale SPA shells).
 // - Offline fallback: serve last cached navigation response only when truly offline.
 // - NEVER cache error responses or HTML responses for JS/CSS/font requests.
-const CACHE_NAME = "ctube-v6";
-const STATIC_ASSETS = ["/", "/manifest.json", "/icon.svg"];
+const CACHE_NAME = "ctube-v7";
+const STATIC_ASSETS = [
+  "/",
+  "/manifest.json",
+  "/icon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-192.png",
+  "/icon-maskable-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
