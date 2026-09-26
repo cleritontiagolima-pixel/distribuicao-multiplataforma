@@ -1,8 +1,17 @@
 import "server-only";
 import { get as httpsGet, Agent as HttpsAgent } from "node:https";
-import { lookup as dnsLookup } from "node:dns";
+import { lookup as dnsLookup, setDefaultResultOrder as dnsSetDefaultResultOrder } from "node:dns";
 import { getYT } from "@/lib/youtube";
 import type { Innertube } from "youtubei.js";
+
+// Node prefere IPv6 por padrão (verbatim); várias instâncias Invidious e
+// alguns gateways do googlevideo só respondem bem via IPv4. Iguala o
+// comportamento do curl (happy-eyeballs prático = IPv4 primeiro).
+try {
+  dnsSetDefaultResultOrder("ipv4first");
+} catch {
+  /* versões antigas: ignora */
+}
 
 // ---------------------------------------------------------------------------
 // Server-side audio resolution for offline downloads.
@@ -59,9 +68,19 @@ async function resolveViaInvidious(videoId: string): Promise<AudioStream | null>
       try {
         // Probe com range minúsculo: confirma que a instância realmente
         // serve o stream (evita devolver URL que falha no meio do download).
+        // UA de navegador: algumas instâncias recusam requests sem UA; e o
+        // timeout curto evita que instâncias lentas travem o resolver.
         const probe = await withTimeout(
-          fetch(url, { headers: { range: "bytes=0-1023" } }),
-          8000
+          fetch(url, {
+            headers: {
+              range: "bytes=0-1023",
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            },
+            redirect: "follow",
+            signal: AbortSignal.timeout(6000),
+          }),
+          7000
         );
         if (probe.status === 404 || probe.status === 403) continue;
         if (!probe.ok && probe.status !== 206) {
@@ -267,13 +286,25 @@ export async function fetchAudioRange(
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) {
       delete getCache()[videoId];
-      await new Promise((r) => setTimeout(r, 1200 * attempt)); // respiro anti-rate-limit
+      await new Promise((r) => setTimeout(r, 4000 * attempt)); // respiro anti-rate-limit
     }
-    const stream = await resolveAudioStream(videoId);
+    let stream = await resolveAudioStream(videoId);
     if (!stream.url) {
       // Negative-cache hit (recent resolution failed) — fail fast instead of
       // requesting an empty googlevideo URL.
       throw new Error("stream-unavailable");
+    }
+    // Última tentativa: se o googlevideo segue recusando mesmo fatiado
+    // (throttle de volume por IP), troca a fonte para um proxy Invidious —
+    // o YouTube não bloqueia o IP delas e a instância serve fatias sem
+    // esse limite.
+    if (attempt === 2 && stream.url.includes("googlevideo.com")) {
+      // Teto de 20s: instâncias públicas mortas não podem travar o chunk.
+      const alt = await withTimeout(resolveViaInvidious(videoId), 20000).catch(() => null);
+      if (alt?.url) {
+        console.log("[chunk] tentativa 3: googlevideo segue recusando; trocando para Invidious");
+        stream = alt;
+      }
     }
     try {
       return await doRangeFetch(stream, start, end);
@@ -339,6 +370,95 @@ function httpsRangeGet(
   });
 }
 
+// Fatia máxima por request ao gateway: puxadas grandes (>1MB) sofrem 403 de
+// throttle em alguns IPs/gateways — fatias de até 1MB passam consistentemente.
+const SUBRANGE_SIZE = 1024 * 1024;
+const SUBRANGE_MIN = 256 * 1024;
+
+// Um range simples via httpsRangeGet (UA Android VR do cliente resolvido).
+async function plainRangeGet(
+  stream: AudioStream,
+  start: number,
+  end: number,
+  family?: 4 | 6
+): Promise<{ status: number; headers: Record<string, string | undefined>; body: Buffer }> {
+  return httpsRangeGet(
+    stream.url,
+    {
+      Range: `bytes=${start}-${end}`,
+      // UA consistente com o cliente que resolveu (ANDROID_VR é Android;
+      // googlevideo valida a coerência UA↔cliente em alguns gateways).
+      "User-Agent":
+        "com.google.android.apps.youtube.vr/1.62.27 (Linux; U; Android 11) gzip",
+      Accept: "*/*",
+    },
+    family
+  );
+}
+
+// Alguns gateways do googlevideo respondem 403 a puxadas grandes (limite de
+// volume por IP) enquanto servem fatias pequenas normalmente. Se a puxada de
+// uma vez falhar, recua automaticamente para fatias de SUBRANGE_SIZE.
+async function rangeFetchWithFallback(
+  stream: AudioStream,
+  start: number,
+  end: number,
+  family?: 4 | 6
+): Promise<{ status: number; headers: Record<string, string | undefined>; body: Buffer }> {
+  // Já entra fatiado: evita a puxada grande que aciona o throttle.
+  const sliceSize = Math.min(SUBRANGE_SIZE, end - start + 1);
+  const first = await plainRangeGet(stream, start, Math.min(end, start + sliceSize - 1), family);
+  if (first.status === 200 || first.status === 206) {
+    // A primeira fatia passou — tenta as demais na mesma granularidade.
+    if (start + sliceSize > end) return first;
+    const chunks: Buffer[] = [first.body];
+    let cursor = start + sliceSize;
+    let current = sliceSize;
+    while (cursor <= end) {
+      const sliceEnd = Math.min(cursor + current - 1, end);
+      let part = await plainRangeGet(stream, cursor, sliceEnd, family);
+      if (part.status === 403) {
+        // Throttle por volume é temporário: reduz a fatia, pausa e tenta de novo.
+        current = Math.max(SUBRANGE_MIN, Math.floor(current / 2));
+        await new Promise((r) => setTimeout(r, 1500));
+        part = await plainRangeGet(stream, cursor, Math.min(cursor + current - 1, end), family);
+      }
+      if (part.status !== 200 && part.status !== 206) {
+        throw new Error(`stream-http-${part.status}`);
+      }
+      chunks.push(part.body);
+      cursor += current;
+      if (cursor <= end) await new Promise((r) => setTimeout(r, 300));
+    }
+    return { status: 206, headers: first.headers, body: Buffer.concat(chunks) };
+  }
+  if (first.status !== 403) return first;
+
+  // Nem a primeira fatia passou: pausa longa (janela de throttle) e recua
+  // para a menor granularidade.
+  console.log(
+    `[chunk] fatia de ${sliceSize} recusada (403); aguardando e fatiando em ${SUBRANGE_MIN} bytes`
+  );
+  await new Promise((r) => setTimeout(r, 3000));
+  const chunks: Buffer[] = [];
+  let cursor = start;
+  while (cursor <= end) {
+    const sliceEnd = Math.min(cursor + SUBRANGE_MIN - 1, end);
+    let part = await plainRangeGet(stream, cursor, sliceEnd, family);
+    if (part.status === 403) {
+      await new Promise((r) => setTimeout(r, 2500));
+      part = await plainRangeGet(stream, cursor, sliceEnd, family);
+    }
+    if (part.status !== 200 && part.status !== 206) {
+      throw new Error(`stream-http-${part.status}`);
+    }
+    chunks.push(part.body);
+    if (sliceEnd < end) await new Promise((r) => setTimeout(r, 400));
+    cursor = sliceEnd + 1;
+  }
+  return { status: 206, headers: first.headers, body: Buffer.concat(chunks) };
+}
+
 async function doRangeFetch(
   stream: AudioStream,
   start: number,
@@ -361,19 +481,8 @@ async function doRangeFetch(
   const ipParam = new URL(stream.url).searchParams.get("ip") || "";
   const family: 4 | 6 | undefined = ipParam.includes(":") ? 6 : ipParam ? 4 : undefined;
   const { status, headers, body } = await withTimeout(
-    httpsRangeGet(
-      stream.url,
-      {
-        Range: `bytes=${start}-${safeEnd}`,
-        // UA consistente com o cliente que resolveu (ANDROID_VR é Android;
-        // googlevideo valida a coerência UA↔cliente em alguns gateways).
-        "User-Agent":
-          "com.google.android.apps.youtube.vr/1.62.27 (Linux; U; Android 11) gzip",
-        Accept: "*/*",
-      },
-      family
-    ),
-    15000
+    rangeFetchWithFallback(stream, start, safeEnd, family),
+    40000
   );
   // 416 = range past the end of the stream → treat as "done" (empty buffer).
   if (status === 416) {
