@@ -1,4 +1,6 @@
 import "server-only";
+import { get as httpsGet, Agent as HttpsAgent } from "node:https";
+import { lookup as dnsLookup } from "node:dns";
 import { getYT } from "@/lib/youtube";
 import type { Innertube } from "youtubei.js";
 
@@ -20,6 +22,7 @@ export interface AudioStream {
   duration?: number; // seconds
 }
 
+const CHUNK_PROBE_LIMIT = 3_400_000; // teto do range quando o total é desconhecido
 const RESOLVE_TTL = 10 * 60_000; // stream URLs expire after a few hours
 const NEG_TTL = 60_000; // failed resolutions are retried after 1 minute
 const FAILED_STREAM: AudioStream = { url: "", mimeType: "audio/mp4", size: 0, title: "" };
@@ -108,7 +111,10 @@ async function pickAudioFormat(info: any, yt?: Innertube): Promise<{ url: string
     );
     if (audioOnly.length) {
       const pool = audioOnly.filter((f) => String(f.mime_type || f.mimeType || "").includes("audio/mp4"));
-      const chosen = (pool.length ? pool : audioOnly).sort(
+      const candidates = pool.length ? pool : audioOnly;
+      // itag 140 (m4a 128kbps) é o formato padrão universal — preferência
+      // explícita; senão o de maior bitrate.
+      const chosen = candidates.find((f) => String(f.itag) === "140") || candidates.sort(
         (a, b) => (b.bitrate || 0) - (a.bitrate || 0)
       )[0];
       let url = chosen.url || "";
@@ -178,9 +184,13 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
   const diag: string[] = [];
   for (const client of ["ANDROID_VR", "IOS", "TV", undefined] as const) {
     try {
+      // getBasicInfo (não getInfo): não baixa a página next — mais rápido e
+      // o cliente ANDROID_VR devolve URLs prontas sem depender do decifrador.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const info: any = await withTimeout(
-        client ? yt.getInfo(videoId, client as never) : yt.getInfo(videoId),
+        client
+          ? yt.getBasicInfo(videoId, { client } as never)
+          : yt.getBasicInfo(videoId),
         15000
       );
       // Diagnóstico por cliente: status + quantos formatos de áudio e
@@ -247,41 +257,85 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
 export async function fetchAudioRange(
   videoId: string,
   start: number,
-  end: number,
-  _retried = false
+  end: number
 ): Promise<{ buffer: ArrayBuffer; total: number; mimeType: string }> {
-  const stream = await resolveAudioStream(videoId);
-  if (!stream.url) {
-    // Negative-cache hit (recent resolution failed) — fail fast instead of
-    // requesting an empty googlevideo URL.
-    throw new Error("stream-unavailable");
-  }
-  try {
-    return await doRangeFetch(stream, start, end);
-  } catch (err) {
-    // A 403 from googlevideo usually means the signed URL expired (or the
-    // IP got temporarily rate-limited). Drop the cached stream and re-resolve
-    // once before giving up, so playback self-heals instead of hard-failing.
-    if (!_retried && err instanceof Error && err.message === "stream-http-403") {
+  // URLs do googlevideo podem dar 403 por expiração/rate-limit do gateway.
+  // Sempre que acontecer, descarta o cache e re-resolve com pausa crescente
+  // (até 3 tentativas) — o download se cura sozinho em vez de falhar.
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
       delete getCache()[videoId];
-      const fresh = await resolveAudioStream(videoId);
-      if (fresh.url) {
-        try {
-          return await doRangeFetch(fresh, start, end);
-        } catch (retryErr) {
-          // Still 403 (transient IP rate-limit): wait briefly and try one
-          // final time before surfacing the failure to the player.
-          if (retryErr instanceof Error && retryErr.message === "stream-http-403") {
-            await new Promise((r) => setTimeout(r, 2500));
-            const again = await resolveAudioStream(videoId);
-            if (again.url) return doRangeFetch(again, start, end);
-          }
-          throw retryErr;
-        }
-      }
+      await new Promise((r) => setTimeout(r, 1200 * attempt)); // respiro anti-rate-limit
     }
-    throw err;
+    const stream = await resolveAudioStream(videoId);
+    if (!stream.url) {
+      // Negative-cache hit (recent resolution failed) — fail fast instead of
+      // requesting an empty googlevideo URL.
+      throw new Error("stream-unavailable");
+    }
+    try {
+      return await doRangeFetch(stream, start, end);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      const ipParam = new URL(stream.url).searchParams.get("ip") || "?";
+      console.error(`[chunk] tentativa ${attempt + 1} falhou: ${lastErr.message} | ip=${ipParam} | host=${new URL(stream.url).host}`);
+      if (!lastErr.message.startsWith("stream-http-40")) throw lastErr;
+      // 403/401: tenta de novo com URL fresca
+    }
   }
+  throw lastErr || new Error("stream-unavailable");
+}
+
+// Fetch de byte range via https nativo do Node: o fetch global (undici) do
+// Next altera a ordem/normalização dos headers e o gateway do googlevideo
+// responde 403 a esses requests — com https.get direto o mesmo URL serve 206.
+function httpsRangeGet(
+  url: string,
+  headers: Record<string, string>,
+  family?: 4 | 6
+): Promise<{ status: number; headers: Record<string, string | undefined>; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const go = (ip?: string) => {
+      const u = new URL(url);
+      // Pré-resolve o host na família certa e conecta ao IP direto (host = ip),
+      // preservando SNI/Host com servername — a URL é vinculada ao IP que fez
+      // o player request (param ip=); sair pela outra família dá 403.
+      const req = httpsGet(
+        {
+          hostname: ip || u.hostname,
+          path: u.pathname + u.search,
+          port: 443,
+          servername: u.hostname,
+          headers: { ...headers, Host: u.hostname },
+          agent: new HttpsAgent({ keepAlive: false }),
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (c: Buffer) => chunks.push(c));
+          res.on("end", () =>
+            resolve({
+              status: res.statusCode || 0,
+              headers: res.headers as Record<string, string | undefined>,
+              body: Buffer.concat(chunks),
+            })
+          );
+        }
+      );
+      req.on("error", reject);
+      req.setTimeout(15000, () => {
+        req.destroy(new Error("Timeout after 15000ms"));
+      });
+    };
+    if (family) {
+      dnsLookup(new URL(url).hostname, { family }, (err, address) => {
+        if (err) reject(err);
+        else go(address);
+      });
+    } else {
+      go();
+    }
+  });
 }
 
 async function doRangeFetch(
@@ -289,26 +343,50 @@ async function doRangeFetch(
   start: number,
   end: number
 ): Promise<{ buffer: ArrayBuffer; total: number; mimeType: string }> {
-  const total = stream.size || end + 1;
-  const safeEnd = Math.min(end, Math.max(total - 1, start));
+  // IMPORTANTE: o googlevideo responde 403 (não 416!) para ranges que começam
+  // além do fim do arquivo. Nunca pedir start >= total quando o tamanho é
+  // conhecido; quando desconhecido, pedir um range pequeno de sonda.
+  const knownTotal = stream.size > 0 ? stream.size : 0;
+  if (knownTotal && start >= knownTotal) {
+    return { buffer: new ArrayBuffer(0), total: knownTotal, mimeType: stream.mimeType || "audio/mp4" };
+  }
+  const total = knownTotal || end + 1;
+  const safeEnd = knownTotal
+    ? Math.min(end, knownTotal - 1)
+    : Math.min(end, start + CHUNK_PROBE_LIMIT - 1);
 
-  const res = await withTimeout(
-    fetch(stream.url, {
-      headers: {
+  // Família de IP do token (ip= na URL): a conexão do range DEVE sair pela
+  // mesma família ou o gateway responde 403.
+  const ipParam = new URL(stream.url).searchParams.get("ip") || "";
+  const family: 4 | 6 | undefined = ipParam.includes(":") ? 6 : ipParam ? 4 : undefined;
+  const { status, headers, body } = await withTimeout(
+    httpsRangeGet(
+      stream.url,
+      {
         Range: `bytes=${start}-${safeEnd}`,
+        // UA consistente com o cliente que resolveu (ANDROID_VR é Android;
+        // googlevideo valida a coerência UA↔cliente em alguns gateways).
         "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+          "com.google.android.apps.youtube.vr/1.62.27 (Linux; U; Android 11) gzip",
+        Accept: "*/*",
       },
-    }),
+      family
+    ),
     15000
   );
   // 416 = range past the end of the stream → treat as "done" (empty buffer).
-  if (res.status === 416) {
+  if (status === 416) {
     return { buffer: new ArrayBuffer(0), total, mimeType: stream.mimeType || "audio/mp4" };
   }
-  if (!res.ok && res.status !== 206) {
-    throw new Error(`stream-http-${res.status}`);
+  if (status !== 200 && status !== 206) {
+    // 403 é comumente rate-limit transitório do gateway: espera breve para
+    // o retry do chamador (fetchAudioRange re-resolve e tenta de novo).
+    throw new Error(`stream-http-${status}`);
   }
-  const buffer = await res.arrayBuffer();
-  return { buffer, total, mimeType: stream.mimeType || "audio/mp4" };
+  // Descobre o total real pelo Content-Range quando não conhecido.
+  const realTotal = knownTotal || Number(headers["content-range"]?.split("/")[1]) || total;
+  const buf = body;
+  const out = new ArrayBuffer(buf.length);
+  new Uint8Array(out).set(buf);
+  return { buffer: out, total: realTotal, mimeType: stream.mimeType || "audio/mp4" };
 }
