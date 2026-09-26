@@ -104,18 +104,23 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
   if (hit && Date.now() - hit.at < RESOLVE_TTL) return hit.stream;
 
   const yt = await getYT();
-  // Try WEB first, then retry once with the TV client: it usually returns a
-  // richer set of adaptive formats even when WEB omits streaming data.
-  for (const client of [undefined, "TV"] as const) {
+  // IOS first: o cliente IOS ainda devolve formatos de áudio com URL pronta
+  // mesmo sem PO token (o YouTube esvaziou WEB/TV para clientes anônimos).
+  // TV em seguida; por último o default (WEB). O motor de PO token abaixo é
+  // o último recurso e reporta o erro final.
+  let lastClientErr: string = "";
+  for (const client of ["IOS", "TV", undefined] as const) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const info: any = await withTimeout(
-        // The "TV" client usually returns richer adaptive formats.
-        client ? yt.getInfo(videoId, "TV" as never) : yt.getInfo(videoId),
+        client ? yt.getInfo(videoId, client as never) : yt.getInfo(videoId),
         15000
       );
       const fmt = pickAudioFormat(info);
-      if (!fmt) continue;
+      if (!fmt) {
+        lastClientErr = `client=${client || "WEB"}:no-audio-url`;
+        continue;
+      }
       const title = (info.basic_info?.title as string) || "";
       const duration = typeof info.basic_info?.duration === "number" ? info.basic_info.duration : undefined;
       const stream: AudioStream = {
@@ -127,8 +132,9 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
       };
       cache[videoId] = { at: Date.now(), stream };
       return stream;
-    } catch {
-      // Try the next client (WEB → TV); the PO-token fallback below is the
+    } catch (err) {
+      lastClientErr = `client=${client || "WEB"}:${(err instanceof Error ? err.message : String(err)).slice(0, 80)}`;
+      // Try the next client; the PO-token fallback below is the
       // last resort and reports the final error.
     }
   }
@@ -145,7 +151,8 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
     // Mark the failure so repeated probes don't re-run the heavy BotGuard
     // engine every time — the negative entry expires quickly (1 min) and a
     // later request can try again (YouTube flakiness is often transient).
-    if (err instanceof Error && err.message) err.message = `pot:${msg.slice(0, 140)}`;
+    const combined = `${lastClientErr} | pot:${msg.slice(0, 120)}`;
+    if (err instanceof Error) err.message = combined;
     cache[videoId] = { at: Date.now() - RESOLVE_TTL + NEG_TTL, stream: FAILED_STREAM };
     throw err;
   }

@@ -289,18 +289,19 @@ export async function resolveAudioWithPot(yt, videoId) {
   const boundYt = s?.session || yt;
   console.error(`[pot] session=${s?.session ? "bound" : "caller"} visitor=${(s?.visitorData || "none").slice(0, 12)}`);
 
-  // YTMUSIC é o cliente que ainda aceita o PO token no player request. Os
+  // IOS primeiro: é o cliente que ainda devolve formatos com URL pronta
+  // (cifrados mas decifráveis) e aceita PO token no player request. Os
   // formatos vêm cifrados (sem .url), então deciframos manualmente e anexamos
   // o pot ao googlevideo URL — usar chooseFormat() falha quando nenhum formato
   // tem URL pronta ("Streaming data not available").
-  // IOS é o fallback: quando o YTMUSIC não retorna streaming data (comum em
-  // vídeos com restrição de música), o cliente IOS costuma devolver formatos
-  // com URL já pronta e aceitável pelo googlevideo com o mesmo pot.
+  // YTMUSIC/MWEB/WEB são fallbacks com pot. Se NENHUM cliente com pot
+  // devolver áudio, tenta IOS sem pot (último recurso — em alguns IPs o
+  // YouTube aceita o request anônimo do cliente IOS).
   let info = null;
   let lastErr = null;
   let hadAudio = false;
   let clientTried = "";
-  for (const client of ["YTMUSIC", "IOS", "MWEB", "WEB"]) {
+  for (const client of ["IOS", "YTMUSIC", "MWEB", "WEB"]) {
     try {
       clientTried = client;
       info = await withTimeout(
@@ -312,6 +313,20 @@ export async function resolveAudioWithPot(yt, videoId) {
       info = null; // sem formatos de áudio neste cliente — tenta o próximo
     } catch (err) {
       lastErr = err;
+    }
+  }
+  if (!info) {
+    // Último recurso: IOS sem PO token (mesma sessão presa ao visitorData).
+    try {
+      clientTried = "IOS-nopot";
+      info = await withTimeout(
+        boundYt.getBasicInfo(videoId, { client: "IOS" }),
+        20000
+      );
+      const af = info?.streaming_data?.adaptive_formats || [];
+      if (!af.some((f) => f && f.has_audio && !f.has_video)) info = null;
+    } catch (err) {
+      lastErr = lastErr || err;
     }
   }
   if (!info) {
