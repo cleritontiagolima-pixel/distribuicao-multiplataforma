@@ -107,7 +107,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex flex-col h-screen overflow-hidden">
         {/* Header */}
         <header
-          className="fixed left-0 right-0 z-40 flex items-center justify-between h-14 px-4 header-safe-top"
+          className="fixed left-0 right-0 z-[112] flex items-center justify-between h-14 px-4 header-safe-top"
           style={{ background: "var(--background)" }}
         >
           {/* Left: Menu + Logo */}
@@ -286,11 +286,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {mobileMenuOpen && (
             <>
               <div
-                className="fixed inset-0 z-50 bg-black/50 md:hidden"
+                className="fixed inset-0 z-[110] bg-black/50 md:hidden"
                 onClick={() => setMobileMenuOpen(false)}
               />
               <aside
-                className="fixed bottom-0 left-0 z-50 w-[280px] overflow-y-auto md:hidden header-safe-top"
+                className="fixed bottom-0 left-0 z-[111] w-[280px] overflow-y-auto md:hidden header-safe-top"
                 style={{ background: "var(--background)" }}
               >
                 <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">

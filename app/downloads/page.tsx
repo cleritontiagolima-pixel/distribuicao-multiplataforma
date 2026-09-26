@@ -62,8 +62,13 @@ export default function DownloadsPage() {
 
   // Check the latest GitHub release so the user can update the app manually
   // from this page (below Downloads), without waiting for the popup notifier.
+  // Na WEB o card também aparece: o botão limpa o cache local e recarrega,
+  // garantindo que celulares/computadores peguem a versão nova do site.
+  const [isWeb, setIsWeb] = useState(true);
   useEffect(() => {
-    if (getPlatform() === "web") return;
+    setIsWeb(getPlatform() === "web");
+  }, []);
+  useEffect(() => {
     let alive = true;
     fetch("/api/update")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("http " + r.status))))
@@ -137,8 +142,9 @@ export default function DownloadsPage() {
           </div>
         </div>
 
-        {/* App update — native apps only (web is always current) */}
-        {getPlatform() !== "web" && !(updateDismissed && !updateAvailable) && (
+        {/* App update — native apps: baixa o instalador novo; web/PWA:
+            limpa o cache local e recarrega para pegar as melhorias. */}
+        {!(updateDismissed && !updateAvailable) && (
           <div
             className="rounded-2xl border p-4 mb-5 flex items-center justify-between gap-4 flex-wrap"
             style={{ borderColor: "var(--border)", background: "var(--card)" }}
@@ -153,18 +159,43 @@ export default function DownloadsPage() {
                     ? `Nova versão disponível: ${latestTag}`
                     : updateError && !update
                       ? "Não foi possível verificar atualizações"
-                      : "Aplicativo atualizado"}
+                      : isWeb
+                        ? "Manter o aplicativo atualizado"
+                        : "Aplicativo atualizado"}
                 </p>
                 <p className="text-xs text-[var(--muted-foreground)]">
                   Versão instalada: v{APP_VERSION}
                   {latestTag ? ` • Mais recente: ${latestTag}` : ""}
+                  {isWeb
+                    ? " • No site, o botão limpa o cache e recarrega com tudo novo"
+                    : ""}
                 </p>
               </div>
             </div>
-            {updateAvailable ? (
+            {updateAvailable || isWeb ? (
               <button
                 onClick={() => {
                   const platform = getPlatform();
+                  if (platform === "web") {
+                    // Web/PWA: limpa TODO o cache local e recarrega — a página
+                    // volta já com a versão nova do site (ícones, player, etc).
+                    void (async () => {
+                      try {
+                        if ("caches" in window) {
+                          const keys = await caches.keys();
+                          await Promise.all(keys.map((k) => caches.delete(k)));
+                        }
+                        if ("serviceWorker" in navigator) {
+                          const regs = await navigator.serviceWorker.getRegistrations();
+                          await Promise.all(regs.map((r) => r.update()));
+                        }
+                      } catch {
+                        /* ignore */
+                      }
+                      window.location.reload();
+                    })();
+                    return;
+                  }
                   const asset =
                     platform === "electron"
                       ? update!.assets?.windows
@@ -178,7 +209,7 @@ export default function DownloadsPage() {
                 className="flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
               >
                 <Download className="w-4 h-4" />
-                Atualizar aplicativo
+                {updateAvailable ? "Atualizar aplicativo" : isWeb ? "Atualizar agora" : "Atualizar aplicativo"}
               </button>
             ) : (
               <button
