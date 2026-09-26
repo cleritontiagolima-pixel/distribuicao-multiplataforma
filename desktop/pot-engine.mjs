@@ -191,12 +191,20 @@ async function ensureReady() {
   const fresh = await withLock(async () => {
     if (state && Date.now() < state.refreshAt) return state;
     const next = await attest();
-    // Recria a sessão Innertube presa ao visitorData atestado.
+    // Recria a sessão Innertube presa ao visitorData atestado. Com cookie de
+    // conta (CTUBE_YT_COOKIE, ex.: Vercel), a sessão logada + pot devolvem as
+    // URLs de streaming mesmo em IP de datacenter (comprovado: sem cookie os
+    // clientes logados voltam sem URL; com cookie+pot voltam completas).
     let session = null;
     try {
       const { Innertube } = await import(V("youtubei.js"));
+      const cookie = process.env.CTUBE_YT_COOKIE?.trim() || "";
       session = next.visitorData
-        ? await Innertube.create({ visitor_data: next.visitorData, enable_session_cache: false })
+        ? await Innertube.create({
+            visitor_data: next.visitorData,
+            ...(cookie ? { cookie } : {}),
+            enable_session_cache: false,
+          })
         : null;
     } catch (err) {
       console.error("pot: failed to create bound session:", err?.message || err);

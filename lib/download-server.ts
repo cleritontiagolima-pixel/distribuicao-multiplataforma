@@ -1,7 +1,7 @@
 import "server-only";
 import { get as httpsGet, Agent as HttpsAgent } from "node:https";
 import { lookup as dnsLookup, setDefaultResultOrder as dnsSetDefaultResultOrder } from "node:dns";
-import { getYT } from "@/lib/youtube";
+import { getYT, getYTCookie } from "@/lib/youtube";
 import type { Innertube } from "youtubei.js";
 
 // Node prefere IPv6 por padrão (verbatim); várias instâncias Invidious e
@@ -197,6 +197,26 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
   if (hit && hit.stream.url && Date.now() - hit.at < RESOLVE_TTL) return hit.stream;
 
   const yt = await getYT();
+
+  // Com cookie de conta (CTUBE_YT_COOKIE, ex.: Vercel), o YouTube exige PO
+  // token nos clientes logados (os formatos voltam SEM url). Ir direto ao
+  // motor pot com a sessão logada resolve de primeira (testado: cookie+pot
+  // devolvem itag 140 com URL e googlevideo aceita); a cadeia de clientes
+  // abaixo continua como fallback para o cenário sem cookie.
+  if (getYTCookie()) {
+    try {
+      const { resolveAudioWithPot } = await import("../desktop/pot-engine.mjs");
+      const viaPot = await withTimeout(resolveAudioWithPot(yt, videoId), 30000);
+      cache[videoId] = { at: Date.now(), stream: viaPot };
+      return viaPot;
+    } catch (err) {
+      console.error(
+        `[ctube] pot+cookie falhou (${videoId}), seguindo cadeia normal:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
   // ANDROID_VR primeiro: é o cliente que ainda devolve formatos de áudio com
   // URL pronta e serve em qualquer IP (comprovado em produção e residencial).
   // IOS em seguida; TV/WEB por último (normalmente esvaziados). O motor de
