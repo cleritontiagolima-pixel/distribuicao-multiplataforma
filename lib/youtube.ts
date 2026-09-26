@@ -18,11 +18,22 @@ export interface VideoItem {
 
 let yt: Innertube | null = null;
 
+/** Cookies do YouTube (opcional). Em IPs de datacenter (Vercel) o YouTube
+ *  responde LOGIN_REQUIRED para requests anônimos; com cookies de uma conta
+ *  logada (variável CTUBE_YT_COOKIE na Vercel) a resolução volta a funcionar. */
+export function getYTCookie(): string {
+  return process.env.CTUBE_YT_COOKIE?.trim() || "";
+}
+
 export async function getYT(): Promise<Innertube> {
   if (!yt) {
+    const cookie = getYTCookie();
     yt = await Innertube.create({
       lang: "pt",
       location: "BR",
+      // Sem cookie explícito, envia consenso básico (evita paredes de consentimento).
+      cookie: cookie || "SOCS=CAI; CONSENT=YES+cb",
+      enable_session_cache: false,
     });
   }
   return yt;
