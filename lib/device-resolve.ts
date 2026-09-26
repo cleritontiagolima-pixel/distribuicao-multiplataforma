@@ -33,34 +33,44 @@ function isNativeApp(): boolean {
 
 export { isNativeApp };
 
-// Native HTTP through Capacitor (no CORS). Dynamically required so the web
-// bundle never includes @capacitor/core.
+// HTTP request do player: no app nativo usa a ponte Capacitor (sem CORS);
+// no navegador usa fetch com Content-Type text/plain (request simples, sem
+// preflight — o endpoint youtubei responde direto ao navegador do usuário).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function nativeFetch(url: string, options: { method?: string; headers?: Record<string, string>; data?: any }): Promise<{ status: number; json: any }> {
   const w = window as unknown as {
     Capacitor?: { Plugins?: { CapacitorHttp?: any } };
   };
   const http = w.Capacitor?.Plugins?.CapacitorHttp;
-  if (!http) throw new Error("capacitor-http-unavailable");
-  const res = await http.request({
-    url,
-    method: options.method || "GET",
-    headers: options.headers,
-    data: typeof options.data === "string" ? options.data : JSON.stringify(options.data ?? {}),
+  if (http && isNativeApp()) {
+    const res = await http.request({
+      url,
+      method: options.method || "GET",
+      headers: options.headers,
+      data: typeof options.data === "string" ? options.data : JSON.stringify(options.data ?? {}),
+    });
+    let json: unknown = null;
+    try {
+      json = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
+    } catch {
+      json = null;
+    }
+    return { status: res.status, json };
+  }
+  // Navegador: request simples (sem cabeçalhos custom) para evitar preflight.
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=UTF-8" },
+    body: typeof options.data === "string" ? options.data : JSON.stringify(options.data ?? {}),
   });
   let json: unknown = null;
   try {
-    json = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
+    json = await res.json();
   } catch {
     json = null;
   }
   return { status: res.status, json };
 }
-
-const IOS_UA =
-  "com.google.ios.youtube/20.11.6 (iPhone10,4; U; CPU iOS 16_7_7 like Mac OS X)";
-const ANDROID_UA =
-  "com.google.android.youtube/19.44.38 (Linux; U; Android 11) gzip";
 
 /**
  * Resolves the audio-only stream from the device itself.
@@ -72,9 +82,9 @@ export async function resolveAudioFromDevice(
   potData: DevicePotData,
   license?: { code: string; email: string } | null
 ): Promise<DeviceStream> {
-  if (!isNativeApp()) throw new Error("device:web-environment");
+  // Funciona no app nativo (ponte Capacitor) E no navegador (fetch simples —
+  // o youtubei responde ao IP residencial do usuário sem LOGIN_REQUIRED).
 
-  const ua = potData.clientUserAgent || (/iPhone|iPad|iPod/i.test(navigator.userAgent) ? IOS_UA : ANDROID_UA);
   const body = {
     context: {
       client: {
@@ -94,11 +104,6 @@ export async function resolveAudioFromDevice(
     `https://www.youtube.com/youtubei/v1/player?key=${potData.apiKey}&prettyPrint=false`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": ua,
-        "X-Goog-Api-Format-Version": "2",
-      },
       data: JSON.stringify(body),
     }
   );

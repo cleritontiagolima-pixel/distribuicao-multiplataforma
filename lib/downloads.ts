@@ -230,42 +230,46 @@ export async function downloadAudio(
   const qs = buildQuery({ videoId: source.videoId });
   onProgress?.({ phase: "resolving", received: 0 });
 
-  // 0) NATIVE FALLBACK FIRST: in the Capacitor/Electron app the device can
-  // make its own player request from the user's IP (YouTube rejects
-  // datacenter IPs even with a valid pot, but accepts residential/mobile
-  // ones). The server only mints the PO token. If anything fails here we
-  // fall through to the classic server-resolved path.
-  if (isNativeApp()) {
-    try {
-      const license = getStoredLicense();
-      const potData = await fetchPotForDevice(source.videoId, license);
-      const stream = await resolveAudioFromDevice(source.videoId, potData, license);
-      onProgress?.({ phase: "downloading", received: 0, total: stream.size || undefined });
-      const direct = await fetch(stream.url, { headers: { Range: "bytes=0-" }, signal });
-      if (direct.ok) {
-        const blob = await readBodyWithProgress(direct, onProgress);
-        onProgress?.({ phase: "saving", received: blob.size, total: stream.size || blob.size });
-        const entry: DownloadedAudio = {
-          videoId: source.videoId,
-          title: stream.title || source.title,
-          channelName: source.channelName,
-          thumbnail: source.thumbnail,
-          duration: source.duration,
-          mimeType: stream.mimeType || "audio/mp4",
-          size: blob.size,
-          downloadedAt: Date.now(),
-          blob,
-        };
-        await saveDownload(entry);
-        return entry;
-      }
-    } catch (err) {
-      if (err instanceof Error && err.message === "license-required") {
-        throw new DownloadError("license", "Licença necessária para baixar.");
-      }
-      if (err instanceof DOMException && err.name === "AbortError") throw err;
-      // fall through to the server-resolved path
+  // 0) DEVICE-SIDE RESOLUTION (nativo E navegador): o YouTube aceita o player
+  // request do IP do USUÁRIO (residencial/mobile) mas bloqueia IPs de
+  // datacenter (Vercel) com LOGIN_REQUIRED. O servidor só minta o PO token;
+  // quem faz o player request é o cliente. No navegador o googlevideo serve
+  // o áudio com CORS (mode cors) — mesmo mecanismo do player MSE do YouTube.
+  try {
+    const license = getStoredLicense();
+    const potData = await fetchPotForDevice(source.videoId, license);
+    const stream = await resolveAudioFromDevice(source.videoId, potData, license);
+    onProgress?.({ phase: "downloading", received: 0, total: stream.size || undefined });
+    const direct = await fetch(stream.url, {
+      headers: { Range: "bytes=0-" },
+      mode: "cors",
+      credentials: "omit",
+      signal,
+    });
+    if (direct.ok) {
+      const blob = await readBodyWithProgress(direct, onProgress);
+      onProgress?.({ phase: "saving", received: blob.size, total: stream.size || blob.size });
+      const entry: DownloadedAudio = {
+        videoId: source.videoId,
+        title: stream.title || source.title,
+        channelName: source.channelName,
+        thumbnail: source.thumbnail,
+        duration: source.duration,
+        mimeType: stream.mimeType || "audio/mp4",
+        size: blob.size,
+        downloadedAt: Date.now(),
+        blob,
+      };
+      await saveDownload(entry);
+      return entry;
     }
+  } catch (err) {
+    if (err instanceof Error && err.message === "license-required") {
+      throw new DownloadError("license", "Licença necessária para baixar.");
+    }
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    // resolve no device falhou (ex.: navegador sem acesso ao googlevideo) —
+    // cai para o caminho clássico resolvido no servidor abaixo.
   }
 
   // 1) Resolve the stream URL server-side (validates the license there too).
