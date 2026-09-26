@@ -32,6 +32,13 @@ export async function GET(request: NextRequest) {
 
   try {
     const stream = await resolveAudioStream(videoId);
+    if (!stream.url) {
+      // Todos os caminhos falharam agora mesmo (não vaza ok:true com URL vazia).
+      return NextResponse.json(
+        { ok: false, error: "resolve-failed", message: "stream-unavailable" },
+        { status: 502 }
+      );
+    }
     return NextResponse.json({
       ok: true,
       videoId,

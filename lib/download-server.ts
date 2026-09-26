@@ -174,7 +174,8 @@ async function pickAudioFormat(info: any, yt?: Innertube): Promise<{ url: string
 export async function resolveAudioStream(videoId: string): Promise<AudioStream> {
   const cache = getCache();
   const hit = cache[videoId];
-  if (hit && Date.now() - hit.at < RESOLVE_TTL) return hit.stream;
+  // Cache hit só quando a URL existe (FAILED_STREAM/URL vazia = re-resolve).
+  if (hit && hit.stream.url && Date.now() - hit.at < RESOLVE_TTL) return hit.stream;
 
   const yt = await getYT();
   // ANDROID_VR primeiro: é o cliente que ainda devolve formatos de áudio com
