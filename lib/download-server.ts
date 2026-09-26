@@ -1,5 +1,6 @@
 import "server-only";
 import { getYT } from "@/lib/youtube";
+import type { Innertube } from "youtubei.js";
 
 // ---------------------------------------------------------------------------
 // Server-side audio resolution for offline downloads.
@@ -93,9 +94,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 // Pick the best audio-only format. Prefer m4a (audio/mp4) because iOS
 // WebViews have limited WebM/Opus playback support; fall back to whatever
-// audio-only format exists (usually opus/webm 251).
+// audio-only format exists (usually opus/webm 251). Formatos cifrados (sem
+// .url) são decifrados com o player da sessão.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function pickAudioFormat(info: any): { url: string; mimeType: string; size: number } | null {
+async function pickAudioFormat(info: any, yt?: Innertube): Promise<{ url: string; mimeType: string; size: number } | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const adaptive: any[] | undefined =
     info?.streaming_data?.adaptive_formats || info?.streamingData?.adaptive_formats;
@@ -109,11 +111,21 @@ function pickAudioFormat(info: any): { url: string; mimeType: string; size: numb
       const chosen = (pool.length ? pool : audioOnly).sort(
         (a, b) => (b.bitrate || 0) - (a.bitrate || 0)
       )[0];
-      const url =
-        chosen.url ||
-        (chosen.signature_cipher && decodeURIComponent(chosen.signature_cipher.split("&url=")[1] || "")) ||
-        (chosen.cipher && decodeURIComponent(chosen.cipher.split("&url=")[1] || "")) ||
-        "";
+      let url = chosen.url || "";
+      if (!url && (chosen.signature_cipher || chosen.cipher) && yt?.session?.player && chosen.decipher) {
+        // Formato cifrado: decifra com o player baixado pela sessão.
+        try {
+          url = await withTimeout(chosen.decipher(yt.session.player), 10000);
+        } catch {
+          /* segue para o chooseFormat abaixo */
+        }
+      }
+      if (!url) {
+        url =
+          (chosen.signature_cipher && decodeURIComponent(chosen.signature_cipher.split("&url=")[1] || "")) ||
+          (chosen.cipher && decodeURIComponent(chosen.cipher.split("&url=")[1] || "")) ||
+          "";
+      }
       if (url) {
         const mimeType = String(chosen.mime_type || chosen.mimeType || "audio/mp4");
         const size = parseInt(chosen.content_length || chosen.contentLength || "0", 10) || 0;
@@ -126,9 +138,13 @@ function pickAudioFormat(info: any): { url: string; mimeType: string; size: numb
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const fmt: any = info.chooseFormat?.({ type: "audio", quality: "best" });
-    if (fmt?.url) {
+    let url = fmt?.url || "";
+    if (!url && fmt?.decipher && yt?.session?.player) {
+      url = await withTimeout(fmt.decipher(yt.session.player), 10000);
+    }
+    if (url) {
       return {
-        url: fmt.url,
+        url,
         mimeType: String(fmt.mime_type || fmt.mimeType || "audio/mp4"),
         size: parseInt(fmt.content_length || fmt.contentLength || "0", 10) || 0,
       };
@@ -159,7 +175,7 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
   // URL pronta e serve em qualquer IP (comprovado em produção e residencial).
   // IOS em seguida; TV/WEB por último (normalmente esvaziados). O motor de
   // PO token + Invidious abaixo são os recursos finais.
-  let lastClientErr: string = "";
+  const diag: string[] = [];
   for (const client of ["ANDROID_VR", "IOS", "TV", undefined] as const) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -167,11 +183,16 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
         client ? yt.getInfo(videoId, client as never) : yt.getInfo(videoId),
         15000
       );
-      const fmt = pickAudioFormat(info);
-      if (!fmt) {
-        lastClientErr = `client=${client || "WEB"}:no-audio-url`;
-        continue;
-      }
+      // Diagnóstico por cliente: status + quantos formatos de áudio e
+      // quantos com URL (aparece na mensagem final se todos falharem).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const adaptive: any[] = info?.streaming_data?.adaptive_formats || [];
+      const audioOnly = adaptive.filter((f) => f && f.has_audio && !f.has_video);
+      const withUrl = audioOnly.filter((f) => f.url);
+      const status = info?.playability_status?.status || "?";
+      diag.push(`${client || "WEB"}:${status}:a${audioOnly.length}/u${withUrl.length}`);
+      const fmt = await pickAudioFormat(info, yt);
+      if (!fmt) continue;
       const title = (info.basic_info?.title as string) || "";
       const duration = typeof info.basic_info?.duration === "number" ? info.basic_info.duration : undefined;
       const stream: AudioStream = {
@@ -184,11 +205,12 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
       cache[videoId] = { at: Date.now(), stream };
       return stream;
     } catch (err) {
-      lastClientErr = `client=${client || "WEB"}:${(err instanceof Error ? err.message : String(err)).slice(0, 80)}`;
+      diag.push(`${client || "WEB"}:ERR:${(err instanceof Error ? err.message : String(err)).slice(0, 60)}`);
       // Try the next client; the PO-token fallback below is the
       // last resort and reports the final error.
     }
   }
+  const lastClientErr = diag.join(" | ");
 
   // Fallback Invidious antes do pot: é rápido (~2s) e independe do tipo de
   // IP; o motor de PO token continua como último recurso (pesado, BotGuard).
