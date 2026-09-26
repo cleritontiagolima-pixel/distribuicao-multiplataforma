@@ -341,10 +341,13 @@ export async function resolveAudioWithPot(yt, videoId) {
     .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
   if (!audioOnly.length) throw new Error("no-audio-format");
 
-  // Prefere m4a (melhor compatibilidade com iOS/Android WebViews), senão o
-  // de maior bitrate.
+  // Prefere m4a (melhor compatibilidade com iOS/Android WebViews); itag 140
+  // (128kbps) é o padrão universal — senão o de maior bitrate.
   const m4a = audioOnly.filter((f) => String(f.mime_type || "").includes("mp4"));
-  const fmt = (m4a.length ? m4a : audioOnly)[0];
+  const pool = m4a.length ? m4a : audioOnly;
+  const fmt = pool.find((f) => String(f.itag) === "140") || pool.sort(
+    (a, b) => (b.bitrate || 0) - (a.bitrate || 0)
+  )[0];
 
   let url = fmt.url;
   if (!url) {

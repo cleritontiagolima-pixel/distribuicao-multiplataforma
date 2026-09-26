@@ -126,10 +126,14 @@ export async function resolveAudioFromDevice(
     .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
   if (!audioOnly.length) throw new Error("device:no-audio-format");
 
-  // Prefer m4a for WebView compatibility.
+  // Prefer m4a for WebView compatibility; itag 140 (128kbps) é o padrão
+  // universal — senão o de maior bitrate.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const m4a = audioOnly.filter((f: any) => String(f.mimeType || f.mime_type || "").includes("mp4"));
-  const fmt = (m4a.length ? m4a : audioOnly)[0];
+  const pool = m4a.length ? m4a : audioOnly;
+  const fmt = pool.find((f: any) => String(f.itag) === "140") || pool.sort(
+    (a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0)
+  )[0];
 
   // IOS client returns url OR cipher/signatureCipher. We can't decipher in the
   // WebView reliably, so require url-bearing formats; the IOS client usually
