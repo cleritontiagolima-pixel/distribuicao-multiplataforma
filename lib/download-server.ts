@@ -155,12 +155,12 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
   if (hit && Date.now() - hit.at < RESOLVE_TTL) return hit.stream;
 
   const yt = await getYT();
-  // IOS first: o cliente IOS ainda devolve formatos de áudio com URL pronta
-  // mesmo sem PO token (o YouTube esvaziou WEB/TV para clientes anônimos).
-  // TV em seguida; por último o default (WEB). O motor de PO token abaixo é
-  // o último recurso e reporta o erro final.
+  // ANDROID_VR primeiro: é o cliente que ainda devolve formatos de áudio com
+  // URL pronta e serve em qualquer IP (comprovado em produção e residencial).
+  // IOS em seguida; TV/WEB por último (normalmente esvaziados). O motor de
+  // PO token + Invidious abaixo são os recursos finais.
   let lastClientErr: string = "";
-  for (const client of ["IOS", "TV", undefined] as const) {
+  for (const client of ["ANDROID_VR", "IOS", "TV", undefined] as const) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const info: any = await withTimeout(
