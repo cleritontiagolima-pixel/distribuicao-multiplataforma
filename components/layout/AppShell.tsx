@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getCurrentUser, logout, type User as UserType } from "@/lib/storage";
+import InstallPwaButton from "@/components/system/InstallPwaButton";
 
 // App Context
 interface AppContextType {
@@ -153,6 +154,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* Right: User */}
           <div className="flex items-center gap-2 md:min-w-[200px] justify-end shrink-0">
+            <InstallPwaButton variant="icon" />
             <button className="p-2 rounded-full hover:bg-[var(--secondary)] transition-colors hidden sm:block">
               <Bell className="w-5 h-5" />
             </button>

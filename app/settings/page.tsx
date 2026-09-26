@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/layout/AppShell";
 import { getCurrentUser, clearHistory, logout } from "@/lib/storage";
+import InstallPwaButton from "@/components/system/InstallPwaButton";
 import { Settings, Trash2, LogOut, Info, ShieldCheck, KeyRound } from "lucide-react";
 import { APP_VERSION, OWNER_EMAIL } from "@/lib/constants";
 import { getStoredLicense, licenseDaysLeft } from "@/lib/owner";
@@ -122,6 +123,16 @@ export default function SettingsPage() {
               </button>
             </div>
           )}
+
+          {/* Install as app (PWA) */}
+          <div className="rounded-xl border border-[var(--border)] p-4" style={{ background: "var(--card)" }}>
+            <h2 className="font-medium mb-2">Aplicativo</h2>
+            <p className="text-sm text-[var(--muted-foreground)] mb-3">
+              Instale o CTUBE como um aplicativo: ícone na tela de início, tela
+              cheia sem barra do navegador e continuação de onde parou.
+            </p>
+            <InstallPwaButton />
+          </div>
 
           {/* About */}
           <div className="rounded-xl border border-[var(--border)] p-4" style={{ background: "var(--card)" }}>
