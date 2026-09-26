@@ -31,6 +31,57 @@ function getCache(): Record<string, { at: number; stream: AudioStream }> {
   return globalForDownload.__ctubeAudioStreams;
 }
 
+// ---------------------------------------------------------------------------
+// Fallback Invidious: instâncias públicas proxyam o stream pelo próprio
+// domínio (o YouTube NÃO bloqueia o IP delas). Quando o YouTube esvazia o
+// streaming-data para o IP de datacenter da Vercel (WEB/TV sem URL, pot
+// recusado), servimos o áudio através da instância — o cliente baixa via
+// /api/download/chunk, que busca na instância server-side (sem CORS).
+// ---------------------------------------------------------------------------
+const INVIDIOUS_HOSTS = [
+  "https://yewtu.be",
+  "https://inv.nadeko.net",
+  "https://invidious.tiekoetter.com",
+  "https://invidious.f5.si",
+  "https://yt.chocolatemoo53.com",
+];
+// itag 140 = m4a 128kbps (universal), 141/139 como alternativas raras.
+const INVIDIOUS_ITAGS = ["140", "141", "139"];
+
+async function resolveViaInvidious(videoId: string): Promise<AudioStream | null> {
+  for (const base of INVIDIOUS_HOSTS) {
+    for (const itag of INVIDIOUS_ITAGS) {
+      const url = `${base}/latest_version?id=${videoId}&itag=${itag}&local=true`;
+      try {
+        // Probe com range minúsculo: confirma que a instância realmente
+        // serve o stream (evita devolver URL que falha no meio do download).
+        const probe = await withTimeout(
+          fetch(url, { headers: { range: "bytes=0-1023" } }),
+          8000
+        );
+        if (probe.status === 404 || probe.status === 403) continue;
+        if (!probe.ok && probe.status !== 206) {
+          try { await probe.body?.cancel(); } catch { /* ignore */ }
+          continue;
+        }
+        const mimeHeader = probe.headers.get("content-type") || "";
+        const total = Number(probe.headers.get("content-range")?.split("/")[1]) || 0;
+        try { await probe.body?.cancel(); } catch { /* ignore */ }
+        if (mimeHeader.includes("text/html")) continue; // página de erro
+        return {
+          url,
+          mimeType: mimeHeader.startsWith("audio/") ? mimeHeader : "audio/mp4",
+          size: total,
+          title: "",
+        };
+      } catch {
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
@@ -137,6 +188,18 @@ export async function resolveAudioStream(videoId: string): Promise<AudioStream> 
       // Try the next client; the PO-token fallback below is the
       // last resort and reports the final error.
     }
+  }
+
+  // Fallback Invidious antes do pot: é rápido (~2s) e independe do tipo de
+  // IP; o motor de PO token continua como último recurso (pesado, BotGuard).
+  try {
+    const viaInstance = await withTimeout(resolveViaInvidious(videoId), 45000);
+    if (viaInstance) {
+      cache[videoId] = { at: Date.now(), stream: viaInstance };
+      return viaInstance;
+    }
+  } catch {
+    /* instâncias indisponíveis — segue para o pot */
   }
 
   // PO-token fallback (lazy: jsdom + BotGuard are heavy and only needed here).
