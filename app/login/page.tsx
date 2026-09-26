@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Play, Eye, EyeOff, ArrowLeft } from "lucide-react";
 import { login, register, getCurrentUser } from "@/lib/storage";
+import { storeLicense, setOwnerSession } from "@/lib/owner";
 import { OWNER_EMAIL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -63,6 +64,36 @@ function LoginForm() {
         return;
       }
       loggedEmail = user.email;
+      // Dono: garante/renova a licença vitalícia a cada login (cobre também
+      // contas já cadastradas neste aparelho, que logam sem o verify acima).
+      if (user.email === OWNER_EMAIL) {
+        try {
+          const res = await fetch("/api/admin/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: OWNER_EMAIL, password }),
+          });
+          if (res.ok) {
+            const data = (await res.json()) as {
+              token?: string;
+              license?: { code: string; email: string; days: number };
+            };
+            // Sessão do painel: o dono não precisa redigitar a senha no /admin.
+            if (data.token) setOwnerSession(data.token);
+            if (data.license) {
+              storeLicense({
+                email: data.license.email,
+                code: data.license.code,
+                activatedAt: Date.now(),
+                expiresAt: Date.now() + data.license.days * 86_400_000,
+                days: data.license.days,
+              });
+            }
+          }
+        } catch {
+          // offline: mantém a licença já armazenada neste aparelho
+        }
+      }
     } else {
       if (!name.trim()) {
         setError("Nome é obrigatório");

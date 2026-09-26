@@ -27,6 +27,7 @@ import {
   clearOwnerSession,
   getOwnerSession,
   setOwnerSession,
+  storeLicense,
   type AppConfig,
 } from "@/lib/owner";
 import {
@@ -118,9 +119,24 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: OWNER_EMAIL, password }),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string; token?: string };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        token?: string;
+        license?: { code: string; email: string; days: number };
+      };
       if (data.ok && data.token) {
         setOwnerSession(data.token);
+        // Renova a licença vitalícia do dono a cada verificação do painel.
+        if (data.license) {
+          storeLicense({
+            email: data.license.email,
+            code: data.license.code,
+            activatedAt: Date.now(),
+            expiresAt: Date.now() + data.license.days * 86_400_000,
+            days: data.license.days,
+          });
+        }
         setVerified(true);
         setPassword("");
         window.location.reload();
